@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.75"
 async-trait = "0.1.74"
+hickory-resolver = "0.24.0"
 hickory-server = "0.24.0"
 thiserror = "1.0.51"
 tokio = { version = "1", features = ["full"] }

@@ -1,9 +1,11 @@
 mod handler;
 mod null_store;
+mod resolver;
 
 use std::{net::SocketAddr, time::Duration};
 
 use hickory_server::{proto::udp::UdpSocket, ServerFuture};
+use resolver::create_resolver;
 use tokio::net::TcpListener;
 
 use crate::handler::Handler;
@@ -14,7 +16,9 @@ const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let mut server = ServerFuture::new(Handler::new());
+    let resolver = create_resolver().await;
+    let handler = Handler::new(resolver);
+    let mut server = ServerFuture::new(handler);
 
     let socket_addr: SocketAddr = "0.0.0.0:1153".parse()?;
     server.register_listener(TcpListener::bind(&socket_addr).await?, TCP_TIMEOUT);

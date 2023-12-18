@@ -1,11 +1,7 @@
-use std::net::IpAddr;
-
+use hickory_resolver::{error::ResolveErrorKind, TokioAsyncResolver};
 use hickory_server::{
     authority::MessageResponseBuilder,
-    proto::{
-        op::{Header, MessageType, OpCode, ResponseCode},
-        rr::{RData, Record},
-    },
+    proto::op::{Header, MessageType, OpCode, ResponseCode},
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
 };
 
@@ -38,16 +34,27 @@ impl From<std::io::Error> for HandlerError {
     }
 }
 
+impl From<hickory_resolver::error::ResolveError> for HandlerError {
+    fn from(value: hickory_resolver::error::ResolveError) -> Self {
+        match value.kind() {
+            ResolveErrorKind::NoRecordsFound { query, .. } => Self::nx_domain(query.name()),
+            _ => Self::serv_fail(value),
+        }
+    }
+}
+
 /// DNS Request Handler
 #[derive(Clone, Debug)]
 pub struct Handler {
     null_store: NullStore,
+    resolver: TokioAsyncResolver,
 }
 
 impl Handler {
-    pub fn new() -> Self {
+    pub fn new(resolver: TokioAsyncResolver) -> Self {
         Self {
             null_store: NullStore,
+            resolver,
         }
     }
 }
@@ -69,22 +76,19 @@ impl Handler {
         }
 
         let name = request.query().name();
-        if self.null_store.is_blocked(name.to_string().as_str()).await {
+        if self.null_store.is_blocked(&name.to_string()).await {
             return Err(HandlerError::nx_domain(name.to_string()));
         }
 
-        let mut header = Header::response_from_request(request.header());
-        header.set_authoritative(true);
+        let lookup = self
+            .resolver
+            .lookup(name, request.query().query_type())
+            .await?;
 
-        let rdata = match request.src().ip() {
-            IpAddr::V4(ipv4) => RData::A(ipv4.into()),
-            IpAddr::V6(ipv6) => RData::AAAA(ipv6.into()),
-        };
-        let records = vec![Record::from_rdata(request.query().name().into(), 60, rdata)];
-
+        let header = Header::response_from_request(request.header());
         let response = MessageResponseBuilder::from_message_request(request).build(
             header,
-            records.iter(),
+            lookup.records(),
             &[],
             &[],
             &[],
@@ -104,8 +108,9 @@ impl RequestHandler for Handler {
         match self.do_handle_request(request, &mut responder).await {
             Ok(info) => info,
             Err(err) => {
-                let response = MessageResponseBuilder::from_message_request(request)
-                    .error_msg(request.header(), err.0);
+                let header = Header::response_from_request(request.header());
+                let response =
+                    MessageResponseBuilder::from_message_request(request).error_msg(&header, err.0);
 
                 match responder.send_response(response).await {
                     Ok(ok) => ok,
