@@ -27,7 +27,7 @@ impl NullStore {
     pub async fn is_blocked(&self, name: &str) -> bool {
         let db = self.db();
         let res = db.get(name).unwrap_or_default();
+
         res.is_some()
-        // matches!(name, "zedo.com." | "doubleclick.net.")
     }
 }
