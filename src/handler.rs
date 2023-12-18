@@ -9,43 +9,69 @@ use hickory_server::{
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
 };
 
+use crate::null_store::NullStore;
+
 #[derive(Debug, thiserror::Error)]
-#[error("HandlerError: {0}")]
-pub struct HandlerError(String);
+#[error("HandlerError: {1}")]
+pub struct HandlerError(ResponseCode, String);
 
 impl HandlerError {
-    pub fn from_str(err: impl ToString) -> Self {
-        Self(err.to_string())
+    pub fn refused(msg: impl ToString) -> Self {
+        Self(ResponseCode::Refused, msg.to_string())
+    }
+
+    pub fn serv_fail(err: impl ToString) -> Self {
+        Self(ResponseCode::ServFail, err.to_string())
+    }
+
+    pub fn nx_domain(domain: impl ToString) -> Self {
+        Self(
+            ResponseCode::NXDomain,
+            format!("No record found for {}", domain.to_string()),
+        )
     }
 }
 
 impl From<std::io::Error> for HandlerError {
     fn from(err: std::io::Error) -> Self {
-        Self(err.to_string())
+        Self::serv_fail(err)
     }
 }
 
 /// DNS Request Handler
 #[derive(Clone, Debug)]
-pub struct Handler;
+pub struct Handler {
+    null_store: NullStore,
+}
+
+impl Handler {
+    pub fn new() -> Self {
+        Self {
+            null_store: NullStore,
+        }
+    }
+}
 
 impl Handler {
     async fn do_handle_request<R: ResponseHandler>(
         &self,
         request: &Request,
-        mut responder: R,
+        responder: &mut R,
     ) -> Result<ResponseInfo, HandlerError> {
         // make sure the request is a query
         if request.op_code() != OpCode::Query {
-            return Err(HandlerError::from_str("Invalid OpCode"));
+            return Err(HandlerError::refused("Unsupported OpCode"));
         }
 
         // make sure the message type is a query
         if request.message_type() != MessageType::Query {
-            return Err(HandlerError::from_str("Invalid MessageType"));
+            return Err(HandlerError::refused("Unsupported MessageType"));
         }
 
-        // let name = request.query().name();
+        let name = request.query().name();
+        if self.null_store.is_blocked(name.to_string().as_str()).await {
+            return Err(HandlerError::nx_domain(name.to_string()));
+        }
 
         let mut header = Header::response_from_request(request.header());
         header.set_authoritative(true);
@@ -73,16 +99,22 @@ impl RequestHandler for Handler {
     async fn handle_request<R: ResponseHandler>(
         &self,
         request: &Request,
-        responder: R,
+        mut responder: R,
     ) -> ResponseInfo {
-        dbg!(request);
-
-        match self.do_handle_request(request, responder).await {
+        match self.do_handle_request(request, &mut responder).await {
             Ok(info) => info,
-            Err(_err) => {
-                let mut header = Header::new();
-                header.set_response_code(ResponseCode::ServFail);
-                return header.into();
+            Err(err) => {
+                let response = MessageResponseBuilder::from_message_request(request)
+                    .error_msg(request.header(), err.0);
+
+                match responder.send_response(response).await {
+                    Ok(ok) => ok,
+                    Err(_) => {
+                        let mut header = Header::new();
+                        header.set_response_code(ResponseCode::ServFail);
+                        header.into()
+                    }
+                }
             }
         }
     }

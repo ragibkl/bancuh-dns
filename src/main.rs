@@ -1,4 +1,5 @@
 mod handler;
+mod null_store;
 
 use std::{net::SocketAddr, time::Duration};
 
@@ -13,7 +14,7 @@ const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let mut server = ServerFuture::new(Handler);
+    let mut server = ServerFuture::new(Handler::new());
 
     let socket_addr: SocketAddr = "0.0.0.0:1153".parse()?;
     server.register_listener(TcpListener::bind(&socket_addr).await?, TCP_TIMEOUT);
