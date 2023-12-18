@@ -52,8 +52,11 @@ pub struct Handler {
 
 impl Handler {
     pub fn new(resolver: TokioAsyncResolver) -> Self {
+        let mut null_store = NullStore::new();
+        null_store.fetch();
+
         Self {
-            null_store: NullStore,
+            null_store,
             resolver,
         }
     }
@@ -75,20 +78,33 @@ impl Handler {
             return Err(HandlerError::refused("Unsupported MessageType"));
         }
 
+        // check null store for blocked domain
         let name = request.query().name();
         if self.null_store.is_blocked(&name.to_string()).await {
             return Err(HandlerError::nx_domain(name.to_string()));
         }
 
-        let lookup = self
+        // fetch record from forward resolver
+        let records = match self
             .resolver
             .lookup(name, request.query().query_type())
-            .await?;
+            .await
+        {
+            Ok(lookup) => lookup.records().to_owned(),
+            Err(err) => match err.kind() {
+                ResolveErrorKind::NoRecordsFound {
+                    response_code: ResponseCode::NoError,
+                    ..
+                } => Vec::new(),
+                _ => return Err(err.into()),
+            },
+        };
 
+        // build header and return response
         let header = Header::response_from_request(request.header());
         let response = MessageResponseBuilder::from_message_request(request).build(
             header,
-            lookup.records(),
+            records.iter(),
             &[],
             &[],
             &[],
