@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
-use rocksdb::DB;
+use rocksdb::{Options, DB};
 
 fn rand_string() -> String {
     thread_rng()
@@ -42,10 +42,10 @@ pub struct AdblockDB {
 impl AdblockDB {
     pub fn new() -> Self {
         let dir: PathBuf = "./bancuh_db".parse().unwrap();
-        let sub_dir = dir.join(rand_string());
-        let wl_path = sub_dir.join("whitelist");
-        let bl_path = sub_dir.join("blacklist");
-        let rw_path = sub_dir.join("rewrites");
+        let rand_prefix = rand_string();
+        let wl_path = dir.join(format!("{rand_prefix}-whitelist"));
+        let bl_path = dir.join(format!("{rand_prefix}-blacklist"));
+        let rw_path = dir.join(format!("{rand_prefix}-rewrites"));
 
         let wl = DB::open_default(wl_path).unwrap();
         let bl = DB::open_default(bl_path).unwrap();
@@ -77,5 +77,18 @@ impl AdblockDB {
     pub fn get_rewrite(&self, domain: &str) -> Option<String> {
         let bytes = self.rw.get(domain).unwrap();
         bytes.map(|b| String::from_utf8(b).unwrap())
+    }
+
+    pub fn destroy(self) {
+        let bl = self.bl.path().to_path_buf();
+        let wl = self.wl.path().to_path_buf();
+        let rw = self.rw.path().to_path_buf();
+
+        drop(self);
+
+        let opts = Options::default();
+        let _ = DB::destroy(&opts, bl);
+        let _ = DB::destroy(&opts, wl);
+        let _ = DB::destroy(&opts, rw);
     }
 }

@@ -57,7 +57,7 @@ pub struct Handler {
 impl Handler {
     pub async fn init(resolver: TokioAsyncResolver) -> Self {
         let mut null_store = AdblockEngine::new();
-        null_store.fetch().await;
+        null_store.start_update().await;
 
         Self {
             null_store,
