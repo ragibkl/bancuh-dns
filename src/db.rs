@@ -11,6 +11,27 @@ fn rand_string() -> String {
         .collect()
 }
 
+fn domain_exists(db: &DB, key: &str) -> bool {
+    let parts: Vec<&str> = key.split('.').filter(|s| !s.is_empty()).collect();
+
+    let mut tests: Vec<String> = Vec::new();
+    let mut acc: Vec<String> = Vec::new();
+    for part in parts.iter().skip(1).rev() {
+        acc.splice(0..0, vec![part.to_string()]);
+        let test = format!("*.{}.", acc.join("."));
+        tests.push(test)
+    }
+    tests.push(key.to_string());
+
+    for test in tests.iter() {
+        if db.get(test).unwrap().is_some() {
+            return true;
+        }
+    }
+
+    false
+}
+
 #[derive(Debug)]
 pub struct AdblockDB {
     bl: DB,
@@ -39,10 +60,10 @@ impl AdblockDB {
     }
 
     pub fn bl_exist(&self, domain: &str) -> bool {
-        self.bl.get(domain).unwrap().is_some()
+        domain_exists(&self.bl, domain)
     }
 
     pub fn wl_exist(&self, domain: &str) -> bool {
-        self.wl.get(domain).unwrap().is_some()
+        domain_exists(&self.wl, domain)
     }
 }

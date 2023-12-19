@@ -1,6 +1,10 @@
 use std::str::FromStr;
 
-use crate::{config::ConfigUrl, db::AdblockDB};
+use crate::{
+    compiler::AdblockCompiler,
+    config::{ConfigUrl, LoadConfig},
+    db::AdblockDB,
+};
 
 #[derive(Debug)]
 pub struct NullStore {
@@ -17,11 +21,23 @@ impl NullStore {
     }
 
     pub async fn fetch(&mut self) {
-        self.db.insert_blacklist("zedo.com");
-        self.db.insert_blacklist("doubleclick.net");
+        let config = LoadConfig::from(&self.config_url).load().await.unwrap();
+        let compiler = AdblockCompiler::init(&config).unwrap();
+
+        compiler.compile(&self.db).await;
     }
 
     pub async fn is_blocked(&self, name: &str) -> bool {
-        self.db.bl_exist(name)
+        if self.db.wl_exist(name) {
+            tracing::info!("whitelist: {name}");
+            return false;
+        }
+
+        if self.db.bl_exist(name) {
+            tracing::info!("blacklist: {name}");
+            return true;
+        }
+
+        false
     }
 }
