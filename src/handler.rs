@@ -44,16 +44,16 @@ impl From<hickory_resolver::error::ResolveError> for HandlerError {
 }
 
 /// DNS Request Handler
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Handler {
     null_store: NullStore,
     resolver: TokioAsyncResolver,
 }
 
 impl Handler {
-    pub fn new(resolver: TokioAsyncResolver) -> Self {
+    pub async fn init(resolver: TokioAsyncResolver) -> Self {
         let mut null_store = NullStore::new();
-        null_store.fetch();
+        null_store.fetch().await;
 
         Self {
             null_store,

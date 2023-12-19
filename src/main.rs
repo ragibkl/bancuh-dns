@@ -1,3 +1,7 @@
+mod compiler;
+mod config;
+mod db;
+mod fetch;
 mod handler;
 mod null_store;
 mod resolver;
@@ -17,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let resolver = create_resolver().await;
-    let handler = Handler::new(resolver);
+    let handler = Handler::init(resolver).await;
     let mut server = ServerFuture::new(handler);
 
     let socket_addr: SocketAddr = "0.0.0.0:1153".parse()?;

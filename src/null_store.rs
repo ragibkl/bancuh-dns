@@ -1,33 +1,27 @@
-use std::{path::PathBuf, str::FromStr};
+use std::str::FromStr;
 
-use rocksdb::DB;
+use crate::{config::ConfigUrl, db::AdblockDB};
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct NullStore {
-    dir: PathBuf,
+    db: AdblockDB,
+    config_url: ConfigUrl,
 }
 
 impl NullStore {
     pub fn new() -> Self {
-        let dir = PathBuf::from_str("./.").unwrap();
-        Self { dir }
+        let db = AdblockDB::new();
+        let config_url = ConfigUrl::from_str("./data/configuration.yaml").unwrap();
+
+        Self { db, config_url }
     }
 
-    fn db(&self) -> DB {
-        let path = self.dir.join("bancuh_db");
-        DB::open_default(path).unwrap()
-    }
-
-    pub fn fetch(&mut self) {
-        let db = self.db();
-        db.put("zedo.com.", "true").unwrap();
-        db.put("doubleclick.net.", "true").unwrap();
+    pub async fn fetch(&mut self) {
+        self.db.insert_blacklist("zedo.com");
+        self.db.insert_blacklist("doubleclick.net");
     }
 
     pub async fn is_blocked(&self, name: &str) -> bool {
-        let db = self.db();
-        let res = db.get(name).unwrap_or_default();
-
-        res.is_some()
+        self.db.bl_exist(name)
     }
 }

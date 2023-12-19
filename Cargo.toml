@@ -6,12 +6,26 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+addr = "0.15.6"
 anyhow = "1.0.75"
 async-trait = "0.1.74"
 hickory-resolver = "0.24.0"
 hickory-server = "0.24.0"
+idna = "0.5.0"
+lazy_static = "1.4.0"
+rand = "0.8.5"
+regex = "1.10.2"
+reqwest = { version = "0.11", default-features = false, features = ["json"] }
 rocksdb = "0.21.0"
+serde = { version ="1.0", features = ["derive"] }
+serde_yaml = "0.9.27"
 thiserror = "1.0.51"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
+url = "2.5.0"
+
+[features]
+default = ["default-tls"]
+default-tls = ["reqwest/default-tls"]
+rustls-tls = ["reqwest/rustls-tls"]
