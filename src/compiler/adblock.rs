@@ -5,7 +5,6 @@ use crate::{config::Config, db::AdblockDB};
 use super::{
     blacklist::{BlacklistCompiler, ParseBlacklist},
     fetch_source::{FetchSource, FetchSourceInitError},
-    parser::{CName, Domain},
     rewrites::{ParseRewrite, RewritesCompiler},
     whitelist::{ParseWhitelist, WhitelistCompiler},
 };
@@ -72,9 +71,11 @@ impl AdblockCompiler {
             }
         }
 
-        // for rw in &self.rewrites {
-        //     let cnames = rw.load_rewrites().await;
-        //     rewrites.extend(cnames);
-        // }
+        for rw in &self.rewrites {
+            let cnames = rw.load_rewrites().await;
+            for c in cnames {
+                db.insert_rewrite(&c.domain.0, &c.alias.0);
+            }
+        }
     }
 }

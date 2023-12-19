@@ -3,16 +3,17 @@ use std::str::FromStr;
 use crate::{
     compiler::AdblockCompiler,
     config::{ConfigUrl, LoadConfig},
-    db::AdblockDB,
 };
 
+use crate::db::AdblockDB;
+
 #[derive(Debug)]
-pub struct NullStore {
+pub struct AdblockEngine {
     db: AdblockDB,
     config_url: ConfigUrl,
 }
 
-impl NullStore {
+impl AdblockEngine {
     pub fn new() -> Self {
         let db = AdblockDB::new();
         let config_url = ConfigUrl::from_str("./data/configuration.yaml").unwrap();
@@ -25,6 +26,10 @@ impl NullStore {
         let compiler = AdblockCompiler::init(&config).unwrap();
 
         compiler.compile(&self.db).await;
+    }
+
+    pub async fn get_redirect(&self, name: &str) -> Option<String> {
+        self.db.get_rewrite(name)
     }
 
     pub async fn is_blocked(&self, name: &str) -> bool {

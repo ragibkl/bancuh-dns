@@ -36,6 +36,7 @@ fn domain_exists(db: &DB, key: &str) -> bool {
 pub struct AdblockDB {
     bl: DB,
     wl: DB,
+    rw: DB,
 }
 
 impl AdblockDB {
@@ -44,11 +45,13 @@ impl AdblockDB {
         let sub_dir = dir.join(rand_string());
         let wl_path = sub_dir.join("whitelist");
         let bl_path = sub_dir.join("blacklist");
+        let rw_path = sub_dir.join("rewrites");
 
         let wl = DB::open_default(wl_path).unwrap();
         let bl = DB::open_default(bl_path).unwrap();
+        let rw = DB::open_default(rw_path).unwrap();
 
-        Self { bl, wl }
+        Self { bl, wl, rw }
     }
 
     pub fn insert_whitelist(&self, domain: &str) {
@@ -59,11 +62,20 @@ impl AdblockDB {
         self.bl.put(format!("{domain}."), "true").unwrap();
     }
 
+    pub fn insert_rewrite(&self, domain: &str, target: &str) {
+        self.rw.put(format!("{domain}."), target).unwrap();
+    }
+
     pub fn bl_exist(&self, domain: &str) -> bool {
         domain_exists(&self.bl, domain)
     }
 
     pub fn wl_exist(&self, domain: &str) -> bool {
         domain_exists(&self.wl, domain)
+    }
+
+    pub fn get_rewrite(&self, domain: &str) -> Option<String> {
+        let bytes = self.rw.get(domain).unwrap();
+        bytes.map(|b| String::from_utf8(b).unwrap())
     }
 }

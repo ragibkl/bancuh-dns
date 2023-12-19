@@ -1,11 +1,15 @@
-use hickory_resolver::{error::ResolveErrorKind, TokioAsyncResolver};
+use hickory_resolver::{
+    error::ResolveErrorKind,
+    proto::rr::{Record, RecordType},
+    TokioAsyncResolver,
+};
 use hickory_server::{
     authority::MessageResponseBuilder,
     proto::op::{Header, MessageType, OpCode, ResponseCode},
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
 };
 
-use crate::null_store::NullStore;
+use crate::engine::AdblockEngine;
 
 #[derive(Debug, thiserror::Error)]
 #[error("HandlerError: {1}")]
@@ -46,13 +50,13 @@ impl From<hickory_resolver::error::ResolveError> for HandlerError {
 /// DNS Request Handler
 #[derive(Debug)]
 pub struct Handler {
-    null_store: NullStore,
+    null_store: AdblockEngine,
     resolver: TokioAsyncResolver,
 }
 
 impl Handler {
     pub async fn init(resolver: TokioAsyncResolver) -> Self {
-        let mut null_store = NullStore::new();
+        let mut null_store = AdblockEngine::new();
         null_store.fetch().await;
 
         Self {
@@ -78,33 +82,58 @@ impl Handler {
             return Err(HandlerError::refused("Unsupported MessageType"));
         }
 
-        // check null store for blocked domain
         let name = request.query().name();
+
+        // check engine for domain override redirection
+        if let Some(alias) = self.null_store.get_redirect(&name.to_string()).await {
+            // fetch records from forward resolver using the alias and return them
+            let records = self
+                .fetch_records(&alias, request.query().query_type())
+                .await?;
+            return self.send_response(request, responder, &records).await;
+        }
+
+        // check engine if domain is blocked
         if self.null_store.is_blocked(&name.to_string()).await {
             return Err(HandlerError::nx_domain(name.to_string()));
         }
 
-        // fetch record from forward resolver
-        let records = match self
-            .resolver
-            .lookup(name, request.query().query_type())
-            .await
-        {
-            Ok(lookup) => lookup.records().to_owned(),
+        // fetch records from forward resolver and return them
+        let records = self
+            .fetch_records(&name.to_string(), request.query().query_type())
+            .await?;
+        self.send_response(request, responder, &records).await
+    }
+
+    /// fetch records from forward resolver
+    async fn fetch_records(
+        &self,
+        name: &str,
+        query_type: RecordType,
+    ) -> Result<Vec<Record>, HandlerError> {
+        match self.resolver.lookup(name, query_type).await {
+            Ok(lookup) => Ok(lookup.records().to_owned()),
             Err(err) => match err.kind() {
                 ResolveErrorKind::NoRecordsFound {
                     response_code: ResponseCode::NoError,
                     ..
-                } => Vec::new(),
-                _ => return Err(err.into()),
+                } => Ok(Vec::new()),
+                _ => Err(err.into()),
             },
-        };
+        }
+    }
 
-        // build header and return response
+    /// build header and return response
+    async fn send_response<R: ResponseHandler>(
+        &self,
+        request: &Request,
+        responder: &mut R,
+        records: &[Record],
+    ) -> Result<ResponseInfo, HandlerError> {
         let header = Header::response_from_request(request.header());
         let response = MessageResponseBuilder::from_message_request(request).build(
             header,
-            records.iter(),
+            records,
             &[],
             &[],
             &[],
