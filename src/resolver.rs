@@ -5,13 +5,16 @@ use hickory_resolver::{
     TokioAsyncResolver,
 };
 
-pub async fn create_resolver() -> TokioAsyncResolver {
-    let ns1_addr: SocketAddr = "8.8.8.8:53".parse().unwrap();
-    let ns2_addr: SocketAddr = "8.8.4.4:53".parse().unwrap();
+pub fn create_resolver(forwarders: &[String]) -> TokioAsyncResolver {
+    tracing::info!("Setting up forwarders: {}", forwarders.to_vec().join(", "));
 
     let mut config = ResolverConfig::new();
-    config.add_name_server(NameServerConfig::new(ns1_addr, Protocol::Udp));
-    config.add_name_server(NameServerConfig::new(ns2_addr, Protocol::Udp));
+    forwarders.iter().for_each(|f| {
+        tracing::info!("Setting up forwarder: {f}");
+        let addr: SocketAddr = format!("{f}:53").parse().unwrap();
+        let name_server = NameServerConfig::new(addr, Protocol::Udp);
+        config.add_name_server(name_server);
+    });
 
     let options = ResolverOpts::default();
 

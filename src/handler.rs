@@ -50,19 +50,13 @@ impl From<hickory_resolver::error::ResolveError> for HandlerError {
 /// DNS Request Handler
 #[derive(Debug)]
 pub struct Handler {
-    null_store: AdblockEngine,
+    engine: AdblockEngine,
     resolver: TokioAsyncResolver,
 }
 
 impl Handler {
-    pub async fn init(resolver: TokioAsyncResolver) -> Self {
-        let mut null_store = AdblockEngine::new();
-        null_store.start_update().await;
-
-        Self {
-            null_store,
-            resolver,
-        }
+    pub fn new(engine: AdblockEngine, resolver: TokioAsyncResolver) -> Self {
+        Self { engine, resolver }
     }
 }
 
@@ -85,7 +79,7 @@ impl Handler {
         let name = request.query().name();
 
         // check engine for domain override redirection
-        if let Some(alias) = self.null_store.get_redirect(&name.to_string()).await {
+        if let Some(alias) = self.engine.get_redirect(&name.to_string()).await {
             // fetch records from forward resolver using the alias and return them
             let records = self
                 .fetch_records(&alias, request.query().query_type())
@@ -94,7 +88,7 @@ impl Handler {
         }
 
         // check engine if domain is blocked
-        if self.null_store.is_blocked(&name.to_string()).await {
+        if self.engine.is_blocked(&name.to_string()).await {
             return Err(HandlerError::nx_domain(name.to_string()));
         }
 

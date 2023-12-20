@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use tokio::sync::Mutex;
 
@@ -10,6 +10,17 @@ use crate::{
 
 static UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
 
+async fn update_definition(db: Arc<Mutex<AdblockDB>>, config_url: &ConfigUrl) {
+    tracing::info!("Loading adblock config. config_url: {config_url}");
+    let config = LoadConfig::from(config_url).load().await.unwrap();
+    let compiler = AdblockCompiler::init(&config).unwrap();
+    tracing::info!("Loading adblock config. config_url: {config_url}. DONE");
+
+    tracing::info!("Compiling adblock");
+    compiler.compile(db).await;
+    tracing::info!("Compiling adblock DONE");
+}
+
 #[derive(Debug)]
 pub struct AdblockEngine {
     db: Arc<Mutex<AdblockDB>>,
@@ -17,9 +28,8 @@ pub struct AdblockEngine {
 }
 
 impl AdblockEngine {
-    pub fn new() -> Self {
+    pub fn new(config_url: ConfigUrl) -> Self {
         let db = Arc::new(Mutex::new(AdblockDB::new()));
-        let config_url = ConfigUrl::from_str("./data/configuration.yaml").unwrap();
 
         Self { db, config_url }
     }
@@ -28,30 +38,16 @@ impl AdblockEngine {
         let db = self.db.clone();
         let config_url = self.config_url.clone();
 
-        tracing::info!("Loading adblock config on first run");
-        let config = LoadConfig::from(&config_url).load().await.unwrap();
-        let compiler = AdblockCompiler::init(&config).unwrap();
-        tracing::info!("Loading adblock config on first run DONE");
-
-        tracing::info!("Compiling adblock on first run");
-        compiler.compile(db.clone()).await;
-        tracing::info!("Compiling adblock on first run DONE");
+        update_definition(db.clone(), &config_url).await;
 
         tokio::spawn(async move {
             loop {
-                tracing::info!("Sleeping for ONE_DAY...");
+                tracing::info!("Sleeping...");
                 tokio::time::sleep(UPDATE_INTERVAL).await;
 
-                tracing::info!("Loading adblock config");
-                let config = LoadConfig::from(&config_url).load().await.unwrap();
-                let compiler = AdblockCompiler::init(&config).unwrap();
-                tracing::info!("Loading adblock config DONE");
-
-                tracing::info!("Compiling adblock");
                 let new_db = Arc::new(Mutex::new(AdblockDB::new()));
-                compiler.compile(new_db.clone()).await;
+                update_definition(new_db.clone(), &config_url).await;
                 let new_db = Arc::into_inner(new_db).unwrap().into_inner();
-                tracing::info!("Compiling adblock DONE");
 
                 let mut db_guard = db.lock().await;
                 let old_db = std::mem::replace(&mut *db_guard, new_db);
