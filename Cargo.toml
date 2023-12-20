@@ -27,6 +27,6 @@ tracing-subscriber = "0.3.18"
 url = "2.5.0"
 
 [features]
-default = ["default-tls"]
+default = ["rustls-tls"]
 default-tls = ["reqwest/default-tls"]
 rustls-tls = ["reqwest/rustls-tls"]
