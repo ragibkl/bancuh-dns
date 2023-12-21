@@ -1,7 +1,7 @@
 use hickory_resolver::{
     error::ResolveErrorKind,
-    proto::rr::{Record, RecordType},
-    TokioAsyncResolver,
+    proto::rr::{rdata::CNAME, RData, Record, RecordType},
+    Name, TokioAsyncResolver,
 };
 use hickory_server::{
     authority::MessageResponseBuilder,
@@ -80,10 +80,20 @@ impl Handler {
 
         // check engine for domain override redirection
         if let Some(alias) = self.engine.get_redirect(&name.to_string()).await {
+            let mut records = Vec::new();
+
+            // include a cname record in the response
+            let cname = Name::from_utf8(&alias).unwrap();
+            let cname_rdata = RData::CNAME(CNAME(cname));
+            let cname_record = Record::from_rdata(request.query().name().into(), 60, cname_rdata);
+            records.push(cname_record);
+
             // fetch records from forward resolver using the alias and return them
-            let records = self
+            let alias_records = self
                 .fetch_records(&alias, request.query().query_type())
                 .await?;
+            records.extend(alias_records);
+
             return self.send_response(request, responder, &records).await;
         }
 
