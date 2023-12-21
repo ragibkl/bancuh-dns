@@ -15,7 +15,7 @@ use hickory_server::{proto::udp::UdpSocket, ServerFuture};
 use resolver::create_resolver;
 use tokio::net::TcpListener;
 
-use crate::handler::Handler;
+use crate::{config::Config, handler::Handler};
 
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -56,6 +56,10 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("config_url: {}", &args.config_url);
     tracing::info!("port: {}", &args.port);
     tracing::info!("forwarders: [{}]", &args.forwarders.to_vec().join(", "));
+
+    tracing::info!("Validating config_url");
+    Config::load(&args.config_url).await?;
+    tracing::info!("Validating config_url. DONE");
 
     let engine = AdblockEngine::new(args.config_url);
     engine.start_update();
