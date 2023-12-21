@@ -39,7 +39,7 @@ pub enum LoadConfigError {
 }
 
 impl Config {
-    pub fn try_from_source_config(
+    fn try_from_source_config(
         config_url: FileOrUrl,
         source_config: SourceConfig,
     ) -> Result<Self, FromSourceError> {
