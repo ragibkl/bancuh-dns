@@ -1,5 +1,5 @@
 ## builder
-FROM rust AS builder
+FROM rust:1.74-bookworm AS builder
 
 WORKDIR /code/bancuh-dns
 
