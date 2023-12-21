@@ -52,23 +52,28 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let args = Args::parse();
-    tracing::info!("config_url: {}", &args.config_url);
-    tracing::info!("port: {}", &args.port);
-    tracing::info!("forwarders: [{}]", &args.forwarders.to_vec().join(", "));
+    let Args {
+        config_url,
+        port,
+        forwarders,
+    } = Args::parse();
 
-    tracing::info!("Validating config_url");
-    Config::load(&args.config_url).await?;
-    tracing::info!("Validating config_url. DONE");
+    tracing::info!("config_url: {config_url}");
+    tracing::info!("port: {port}");
+    tracing::info!("forwarders: [{}]", forwarders.join(", "));
 
-    let engine = AdblockEngine::new(args.config_url);
+    tracing::info!("Validating adblock config. config_url: {config_url}");
+    Config::load(&config_url).await?;
+    tracing::info!("Validating adblock config. config_url: {config_url}. DONE");
+
+    let engine = AdblockEngine::new(config_url);
     engine.start_update();
 
-    let resolver = create_resolver(&args.forwarders);
+    let resolver = create_resolver(&forwarders);
     let handler = Handler::new(engine, resolver);
 
     let mut server = ServerFuture::new(handler);
-    let socket_addr: SocketAddr = format!("0.0.0.0:{}", args.port).parse()?;
+    let socket_addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
     server.register_listener(TcpListener::bind(&socket_addr).await?, TCP_TIMEOUT);
     server.register_socket(UdpSocket::bind(socket_addr).await?);
 
