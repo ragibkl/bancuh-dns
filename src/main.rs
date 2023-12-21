@@ -9,7 +9,7 @@ mod resolver;
 use std::{net::SocketAddr, time::Duration};
 
 use clap::Parser;
-use config::ConfigUrl;
+use config::FileOrUrl;
 use engine::AdblockEngine;
 use hickory_server::{proto::udp::UdpSocket, ServerFuture};
 use resolver::create_resolver;
@@ -31,7 +31,7 @@ struct Args {
         value_name = "CONFIG_URL",
         default_value = "https://raw.githubusercontent.com/ragibkl/adblock-dns-server/master/data/configuration.yaml"
     )]
-    config_url: ConfigUrl,
+    config_url: FileOrUrl,
 
     /// Sets a custom listener port
     #[arg(short, long, value_name = "PORT", default_value = "53")]

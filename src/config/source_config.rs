@@ -20,18 +20,14 @@ pub enum OverrideFormat {
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
-pub struct Source<T> {
+pub struct Source<T: Clone> {
     pub format: T,
     pub path: String,
 }
 
-pub type Blacklist = Source<BlacklistFormat>;
-pub type Whitelist = Source<WhitelistFormat>;
-pub type Overrides = Source<OverrideFormat>;
-
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct SourceConfig {
-    pub blacklist: Vec<Blacklist>,
-    pub whitelist: Vec<Whitelist>,
-    pub overrides: Vec<Overrides>,
+    pub blacklist: Vec<Source<BlacklistFormat>>,
+    pub whitelist: Vec<Source<WhitelistFormat>>,
+    pub overrides: Vec<Source<OverrideFormat>>,
 }

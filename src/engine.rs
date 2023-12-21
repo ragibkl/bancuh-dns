@@ -4,16 +4,16 @@ use tokio::sync::Mutex;
 
 use crate::{
     compiler::AdblockCompiler,
-    config::{ConfigUrl, LoadConfig},
+    config::{Config, FileOrUrl},
     db::AdblockDB,
 };
 
 static UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
 
-async fn update_definition(db: Arc<Mutex<AdblockDB>>, config_url: &ConfigUrl) {
+async fn update_definition(db: Arc<Mutex<AdblockDB>>, config_url: &FileOrUrl) {
     tracing::info!("Loading adblock config. config_url: {config_url}");
-    let config = LoadConfig::from(config_url).load().await.unwrap();
-    let compiler = AdblockCompiler::init(&config).unwrap();
+    let config = Config::load(config_url).await.unwrap();
+    let compiler = AdblockCompiler::init(&config);
     tracing::info!("Loading adblock config. config_url: {config_url}. DONE");
 
     tracing::info!("Compiling adblock");
@@ -24,11 +24,11 @@ async fn update_definition(db: Arc<Mutex<AdblockDB>>, config_url: &ConfigUrl) {
 #[derive(Debug)]
 pub struct AdblockEngine {
     db: Arc<Mutex<AdblockDB>>,
-    config_url: ConfigUrl,
+    config_url: FileOrUrl,
 }
 
 impl AdblockEngine {
-    pub fn new(config_url: ConfigUrl) -> Self {
+    pub fn new(config_url: FileOrUrl) -> Self {
         let db = Arc::new(Mutex::new(AdblockDB::new()));
 
         Self { db, config_url }

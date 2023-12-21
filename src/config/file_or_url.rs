@@ -3,18 +3,29 @@ use std::{fmt::Display, path::PathBuf, str::FromStr};
 use thiserror::Error;
 use url::Url;
 
+use crate::fetch::Fetch;
+
 #[derive(Clone, Debug)]
-pub enum ConfigUrl {
+pub enum FileOrUrl {
     Url(Url),
     File(PathBuf),
 }
 
 #[derive(Error, Debug)]
-#[error("ParseConfigError")]
-pub struct ParseConfigError;
+#[error("ParseFileOrUrlError")]
+pub struct ParseFileOrUrlError;
 
-impl FromStr for ConfigUrl {
-    type Err = ParseConfigError;
+impl FileOrUrl {
+    pub fn to_fetch(&self) -> Fetch {
+        match self {
+            FileOrUrl::Url(url) => url.to_owned().into(),
+            FileOrUrl::File(path) => path.to_owned().into(),
+        }
+    }
+}
+
+impl FromStr for FileOrUrl {
+    type Err = ParseFileOrUrlError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Ok(url) = Url::parse(s) {
@@ -25,15 +36,15 @@ impl FromStr for ConfigUrl {
             return Ok(Self::File(path_buf));
         }
 
-        Err(ParseConfigError)
+        Err(ParseFileOrUrlError)
     }
 }
 
-impl Display for ConfigUrl {
+impl Display for FileOrUrl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigUrl::Url(url) => f.write_fmt(format_args!("Url: {}", url)),
-            ConfigUrl::File(path) => f.write_fmt(format_args!(
+            FileOrUrl::Url(url) => f.write_fmt(format_args!("Url: {}", url)),
+            FileOrUrl::File(path) => f.write_fmt(format_args!(
                 "File: {}",
                 path.as_path().as_os_str().to_str().unwrap_or_default()
             )),

@@ -26,37 +26,45 @@ pub enum AdblockCompilerConfigError {
 }
 
 impl AdblockCompiler {
-    pub fn init(config: &Config) -> Result<Self, AdblockCompilerConfigError> {
-        let mut blacklists = Vec::new();
+    pub fn init(config: &Config) -> Self {
+        let blacklists = config
+            .blacklist
+            .iter()
+            .map(|bl| {
+                let source = FetchSource(bl.file_or_url.to_fetch());
+                let parser = ParseBlacklist::from(&bl.format);
 
-        for bl in &config.blacklist {
-            let source = FetchSource::try_from(&bl.path, &config.config_url)?;
-            let parser = ParseBlacklist::from(&bl.format);
+                BlacklistCompiler { source, parser }
+            })
+            .collect();
 
-            blacklists.push(BlacklistCompiler { source, parser });
-        }
+        let whitelists = config
+            .whitelist
+            .iter()
+            .map(|wl| {
+                let source = FetchSource(wl.file_or_url.to_fetch());
+                let parser = ParseWhitelist::from(&wl.format);
 
-        let mut whitelists = Vec::new();
-        for wl in &config.whitelist {
-            let source = FetchSource::try_from(&wl.path, &config.config_url)?;
-            let parser = ParseWhitelist::from(&wl.format);
+                WhitelistCompiler { source, parser }
+            })
+            .collect();
 
-            whitelists.push(WhitelistCompiler { source, parser });
-        }
+        let rewrites = config
+            .overrides
+            .iter()
+            .map(|rw| {
+                let source = FetchSource(rw.file_or_url.to_fetch());
+                let parser = ParseRewrite::from(&rw.format);
 
-        let mut rewrites = Vec::new();
-        for rw in &config.overrides {
-            let source = FetchSource::try_from(&rw.path, &config.config_url)?;
-            let parser = ParseRewrite::from(&rw.format);
+                RewritesCompiler { source, parser }
+            })
+            .collect();
 
-            rewrites.push(RewritesCompiler { source, parser });
-        }
-
-        Ok(Self {
+        Self {
             blacklists,
             whitelists,
             rewrites,
-        })
+        }
     }
 
     pub async fn compile(&self, db: Arc<Mutex<AdblockDB>>) {

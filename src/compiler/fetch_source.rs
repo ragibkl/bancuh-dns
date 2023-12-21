@@ -5,12 +5,12 @@ use thiserror::Error;
 use url::Url;
 
 use crate::{
-    config::ConfigUrl,
+    config::FileOrUrl,
     fetch::{Fetch, FetchError},
 };
 
 #[derive(Debug)]
-pub struct FetchSource(Fetch);
+pub struct FetchSource(pub Fetch);
 
 #[derive(Error, Debug)]
 #[error("FetchSourceError: {0}")]
@@ -34,18 +34,18 @@ pub enum FetchSourceInitError {
 impl FetchSource {
     pub fn try_from(
         source_path: &str,
-        config_url: &ConfigUrl,
+        config_url: &FileOrUrl,
     ) -> Result<Self, FetchSourceInitError> {
         if source_path.starts_with("http") {
             let url = Url::parse(source_path)?;
             Ok(Self(url.into()))
         } else if source_path.starts_with("./") {
             match config_url {
-                ConfigUrl::Url(u) => {
+                FileOrUrl::Url(u) => {
                     let url = u.join(source_path)?;
                     Ok(Self(url.into()))
                 }
-                ConfigUrl::File(p) => {
+                FileOrUrl::File(p) => {
                     let path = p
                         .parent()
                         .ok_or(FetchSourceInitError::InvalidPath)?
