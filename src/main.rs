@@ -57,8 +57,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("port: {}", &args.port);
     tracing::info!("forwarders: [{}]", &args.forwarders.to_vec().join(", "));
 
-    let mut engine = AdblockEngine::new(args.config_url);
-    engine.start_update().await;
+    let engine = AdblockEngine::new(args.config_url);
+    engine.start_update();
 
     let resolver = create_resolver(&args.forwarders);
     let handler = Handler::new(engine, resolver);

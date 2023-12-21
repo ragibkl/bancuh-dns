@@ -34,13 +34,13 @@ impl AdblockEngine {
         Self { db, config_url }
     }
 
-    pub async fn start_update(&mut self) {
+    pub fn start_update(&self) {
         let db = self.db.clone();
         let config_url = self.config_url.clone();
 
-        update_definition(db.clone(), &config_url).await;
-
         tokio::spawn(async move {
+            update_definition(db.clone(), &config_url).await;
+
             loop {
                 tracing::info!("Sleeping...");
                 tokio::time::sleep(UPDATE_INTERVAL).await;
