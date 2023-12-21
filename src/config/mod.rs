@@ -6,19 +6,17 @@ mod source_config;
 
 use thiserror::Error;
 
+pub use self::domain_source::DomainSource;
 pub use self::file_or_url::FileOrUrl;
 pub use self::source_config::{BlacklistFormat, OverrideFormat, WhitelistFormat};
 
 use crate::fetch::FetchError;
 
-use self::{
-    domain_source::{DomainSource, FromSourceError},
-    source_config::SourceConfig,
-};
+use self::{domain_source::FromSourceError, source_config::SourceConfig};
 
-type Blacklist = DomainSource<BlacklistFormat>;
-type Whitelist = DomainSource<WhitelistFormat>;
-type Overrides = DomainSource<OverrideFormat>;
+pub type Blacklist = DomainSource<BlacklistFormat>;
+pub type Whitelist = DomainSource<WhitelistFormat>;
+pub type Overrides = DomainSource<OverrideFormat>;
 
 #[derive(Debug, Clone)]
 pub struct Config {

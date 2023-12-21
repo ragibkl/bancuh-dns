@@ -1,9 +1,6 @@
-use crate::config::WhitelistFormat;
+use crate::config::{FileOrUrl, Whitelist, WhitelistFormat};
 
-use super::{
-    fetch_source::FetchSource,
-    parser::{CName, Domain, Host},
-};
+use super::parser::{CName, Domain, Host};
 
 #[derive(Debug)]
 pub enum ParseWhitelist {
@@ -34,13 +31,13 @@ impl From<&WhitelistFormat> for ParseWhitelist {
 
 #[derive(Debug)]
 pub struct WhitelistCompiler {
-    pub(crate) source: FetchSource,
+    pub(crate) source: FileOrUrl,
     pub(crate) parser: ParseWhitelist,
 }
 
 impl WhitelistCompiler {
     pub async fn load_whitelist(&self) -> Vec<Domain> {
-        let source = match self.source.fetch().await {
+        let source = match self.source.to_fetch().fetch().await {
             Ok(s) => s,
             Err(err) => {
                 println!("Could not fetch from {:?}", &self.source);
@@ -58,5 +55,14 @@ impl WhitelistCompiler {
         }
 
         domains
+    }
+}
+
+impl From<&Whitelist> for WhitelistCompiler {
+    fn from(wl: &Whitelist) -> Self {
+        Self {
+            source: wl.file_or_url.clone(),
+            parser: ParseWhitelist::from(&wl.format),
+        }
     }
 }

@@ -13,7 +13,7 @@ static UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
 async fn update_definition(db: Arc<Mutex<AdblockDB>>, config_url: &FileOrUrl) {
     tracing::info!("Loading adblock config. config_url: {config_url}");
     let config = Config::load(config_url).await.unwrap();
-    let compiler = AdblockCompiler::init(&config);
+    let compiler = AdblockCompiler::from_config(&config);
     tracing::info!("Loading adblock config. config_url: {config_url}. DONE");
 
     tracing::info!("Compiling adblock");

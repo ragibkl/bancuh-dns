@@ -1,6 +1,6 @@
-use crate::config::OverrideFormat;
+use crate::config::{FileOrUrl, OverrideFormat, Overrides};
 
-use super::{fetch_source::FetchSource, parser::CName};
+use super::parser::CName;
 
 #[derive(Debug)]
 pub(super) enum ParseRewrite {
@@ -25,13 +25,13 @@ impl From<&OverrideFormat> for ParseRewrite {
 
 #[derive(Debug)]
 pub struct RewritesCompiler {
-    pub(super) source: FetchSource,
+    pub(super) source: FileOrUrl,
     pub(super) parser: ParseRewrite,
 }
 
 impl RewritesCompiler {
     pub async fn load_rewrites(&self) -> Vec<CName> {
-        let source = match self.source.fetch().await {
+        let source = match self.source.to_fetch().fetch().await {
             Ok(s) => s,
             Err(err) => {
                 println!("Could not fetch from {:?}", &self.source);
@@ -49,5 +49,14 @@ impl RewritesCompiler {
         }
 
         cnames
+    }
+}
+
+impl From<&Overrides> for RewritesCompiler {
+    fn from(rw: &Overrides) -> Self {
+        Self {
+            source: rw.file_or_url.clone(),
+            parser: ParseRewrite::from(&rw.format),
+        }
     }
 }

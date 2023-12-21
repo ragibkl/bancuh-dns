@@ -1,9 +1,6 @@
-use crate::config::BlacklistFormat;
+use crate::config::{Blacklist, BlacklistFormat, FileOrUrl};
 
-use super::{
-    fetch_source::FetchSource,
-    parser::{Domain, Host},
-};
+use super::parser::{Domain, Host};
 
 #[derive(Debug)]
 pub enum ParseBlacklist {
@@ -31,13 +28,13 @@ impl From<&BlacklistFormat> for ParseBlacklist {
 
 #[derive(Debug)]
 pub struct BlacklistCompiler {
-    pub(crate) source: FetchSource,
+    pub(crate) source: FileOrUrl,
     pub(crate) parser: ParseBlacklist,
 }
 
 impl BlacklistCompiler {
     pub async fn load_blacklist(&self) -> Vec<Domain> {
-        let source = match self.source.fetch().await {
+        let source = match self.source.to_fetch().fetch().await {
             Ok(s) => s,
             Err(err) => {
                 println!("Could not fetch from {:?}", &self.source);
@@ -55,5 +52,14 @@ impl BlacklistCompiler {
         }
 
         domains
+    }
+}
+
+impl From<&Blacklist> for BlacklistCompiler {
+    fn from(bl: &Blacklist) -> Self {
+        Self {
+            source: bl.file_or_url.clone(),
+            parser: ParseBlacklist::from(&bl.format),
+        }
     }
 }
