@@ -1,4 +1,4 @@
-use crate::config::{Blacklist, BlacklistFormat, FileOrUrl};
+use crate::config::{BlacklistFormat, BlacklistSource, FileOrUrl};
 
 use super::parser::{Domain, Host};
 
@@ -55,8 +55,8 @@ impl BlacklistCompiler {
     }
 }
 
-impl From<&Blacklist> for BlacklistCompiler {
-    fn from(bl: &Blacklist) -> Self {
+impl From<&BlacklistSource> for BlacklistCompiler {
+    fn from(bl: &BlacklistSource) -> Self {
         Self {
             source: bl.file_or_url.clone(),
             parser: ParseBlacklist::from(&bl.format),

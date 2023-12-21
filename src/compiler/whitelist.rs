@@ -1,4 +1,4 @@
-use crate::config::{FileOrUrl, Whitelist, WhitelistFormat};
+use crate::config::{FileOrUrl, WhitelistFormat, WhitelistSource};
 
 use super::parser::{CName, Domain, Host};
 
@@ -58,8 +58,8 @@ impl WhitelistCompiler {
     }
 }
 
-impl From<&Whitelist> for WhitelistCompiler {
-    fn from(wl: &Whitelist) -> Self {
+impl From<&WhitelistSource> for WhitelistCompiler {
+    fn from(wl: &WhitelistSource) -> Self {
         Self {
             source: wl.file_or_url.clone(),
             parser: ParseWhitelist::from(&wl.format),

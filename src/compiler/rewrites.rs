@@ -1,4 +1,4 @@
-use crate::config::{FileOrUrl, OverrideFormat, Overrides};
+use crate::config::{FileOrUrl, OverrideFormat, OverridesSource};
 
 use super::parser::CName;
 
@@ -52,8 +52,8 @@ impl RewritesCompiler {
     }
 }
 
-impl From<&Overrides> for RewritesCompiler {
-    fn from(rw: &Overrides) -> Self {
+impl From<&OverridesSource> for RewritesCompiler {
+    fn from(rw: &OverridesSource) -> Self {
         Self {
             source: rw.file_or_url.clone(),
             parser: ParseRewrite::from(&rw.format),
