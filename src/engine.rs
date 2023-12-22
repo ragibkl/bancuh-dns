@@ -1,6 +1,7 @@
-use std::{sync::Arc, time::Duration};
-
-use tokio::sync::Mutex;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use crate::{
     compiler::AdblockCompiler,
@@ -44,10 +45,7 @@ impl AdblockEngine {
                 load_definition(&new_db, &config_url).await;
 
                 // swap the new_db in-place of the existing old_db
-                {
-                    let mut db_guard = db.lock().await;
-                    *db_guard = new_db;
-                };
+                *db.lock().unwrap() = new_db;
 
                 tracing::info!("Sleeping...");
                 tokio::time::sleep(UPDATE_INTERVAL).await;
@@ -56,7 +54,7 @@ impl AdblockEngine {
     }
 
     pub async fn get_redirect(&self, name: &str) -> Option<String> {
-        let db_guard = self.db.lock().await;
+        let db_guard = self.db.lock().unwrap();
         let alias = db_guard.get_rewrite(name);
 
         if let Some(alias) = alias.as_deref() {
@@ -67,7 +65,7 @@ impl AdblockEngine {
     }
 
     pub async fn is_blocked(&self, name: &str) -> bool {
-        let db_guard = self.db.lock().await;
+        let db_guard = self.db.lock().unwrap();
 
         if db_guard.wl_exist(name) {
             tracing::info!("whitelist: {name}");
