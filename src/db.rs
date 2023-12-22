@@ -78,23 +78,27 @@ impl AdblockDB {
         let bytes = self.rw.get(domain).unwrap();
         bytes.map(|b| String::from_utf8(b).unwrap())
     }
-
-    pub fn destroy(self) {
-        let bl = self.bl.path().to_path_buf();
-        let wl = self.wl.path().to_path_buf();
-        let rw = self.rw.path().to_path_buf();
-
-        drop(self);
-
-        let opts = Options::default();
-        let _ = DB::destroy(&opts, bl);
-        let _ = DB::destroy(&opts, wl);
-        let _ = DB::destroy(&opts, rw);
-    }
 }
 
 impl Default for AdblockDB {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for AdblockDB {
+    fn drop(&mut self) {
+        let bl = self.bl.path().to_path_buf();
+        let wl = self.wl.path().to_path_buf();
+        let rw = self.rw.path().to_path_buf();
+
+        tokio::task::spawn_blocking(move || {
+            std::thread::sleep(std::time::Duration::from_micros(100));
+
+            let opts = Options::default();
+            let _ = DB::destroy(&opts, bl);
+            let _ = DB::destroy(&opts, wl);
+            let _ = DB::destroy(&opts, rw);
+        });
     }
 }

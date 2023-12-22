@@ -44,11 +44,10 @@ impl AdblockEngine {
                 load_definition(&new_db, &config_url).await;
 
                 // swap the new_db in-place of the existing old_db
-                let old_db = {
+                {
                     let mut db_guard = db.lock().await;
-                    std::mem::replace(&mut *db_guard, new_db)
+                    *db_guard = new_db;
                 };
-                old_db.destroy();
 
                 tracing::info!("Sleeping...");
                 tokio::time::sleep(UPDATE_INTERVAL).await;

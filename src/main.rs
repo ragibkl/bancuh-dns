@@ -77,7 +77,9 @@ async fn main() -> anyhow::Result<()> {
     server.register_listener(TcpListener::bind(&socket_addr).await?, TCP_TIMEOUT);
     server.register_socket(UdpSocket::bind(socket_addr).await?);
 
+    tracing::info!("Starting server...");
     server.block_until_done().await?;
+    tracing::info!("Server stopped...");
 
     Ok(())
 }
