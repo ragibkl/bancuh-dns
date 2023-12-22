@@ -2,7 +2,7 @@ use crate::config::{FileOrUrl, OverrideFormat, OverridesSource};
 
 use super::parser::CName;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) enum ParseRewrite {
     CName,
 }
@@ -41,14 +41,12 @@ impl RewritesCompiler {
             }
         };
 
-        let mut cnames: Vec<CName> = Vec::new();
-        for line in source.lines() {
-            if let Some(bl) = self.parser.parse(line) {
-                cnames.push(bl);
-            }
-        }
-
-        cnames
+        let parser = self.parser.clone();
+        tokio::task::spawn_blocking(move || {
+            source.lines().filter_map(|l| parser.parse(l)).collect()
+        })
+        .await
+        .unwrap_or_default()
     }
 }
 

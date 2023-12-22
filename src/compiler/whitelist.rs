@@ -2,7 +2,7 @@ use crate::config::{FileOrUrl, WhitelistFormat, WhitelistSource};
 
 use super::parser::{CName, Domain, Host};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParseWhitelist {
     Hosts,
     Domains,
@@ -47,14 +47,12 @@ impl WhitelistCompiler {
             }
         };
 
-        let mut domains: Vec<Domain> = Vec::new();
-        for line in source.lines() {
-            if let Some(bl) = self.parser.parse(line) {
-                domains.push(bl);
-            }
-        }
-
-        domains
+        let parser = self.parser.clone();
+        tokio::task::spawn_blocking(move || {
+            source.lines().filter_map(|l| parser.parse(l)).collect()
+        })
+        .await
+        .unwrap_or_default()
     }
 }
 
