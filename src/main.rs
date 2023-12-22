@@ -13,7 +13,7 @@ use config::FileOrUrl;
 use engine::AdblockEngine;
 use hickory_server::{proto::udp::UdpSocket, ServerFuture};
 use resolver::create_resolver;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, signal};
 
 use crate::{config::Config, handler::Handler};
 
@@ -72,14 +72,25 @@ async fn main() -> anyhow::Result<()> {
     let resolver = create_resolver(&forwarders);
     let handler = Handler::new(engine, resolver);
 
+    tracing::info!("Starting server");
     let mut server = ServerFuture::new(handler);
     let socket_addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
     server.register_listener(TcpListener::bind(&socket_addr).await?, TCP_TIMEOUT);
     server.register_socket(UdpSocket::bind(socket_addr).await?);
+    tracing::info!("Starting server. DONE");
 
-    tracing::info!("Starting server...");
-    server.block_until_done().await?;
-    tracing::info!("Server stopped...");
+    match signal::ctrl_c().await {
+        Ok(()) => {
+            tracing::info!("Received shutdown signal");
+        }
+        Err(err) => {
+            tracing::info!("Unable to listen for shutdown signal: {err}");
+        }
+    }
+
+    tracing::info!("Stopping server");
+    server.shutdown_gracefully().await?;
+    tracing::info!("Stopping server. DONE");
 
     Ok(())
 }

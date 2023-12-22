@@ -96,9 +96,21 @@ impl Drop for AdblockDB {
             std::thread::sleep(std::time::Duration::from_micros(100));
 
             let opts = Options::default();
-            let _ = DB::destroy(&opts, bl);
-            let _ = DB::destroy(&opts, wl);
-            let _ = DB::destroy(&opts, rw);
+
+            let bl_str = bl.to_path_buf().to_string_lossy().to_string();
+            tracing::info!("Destroying db: {bl_str}",);
+            let bl_ok = DB::destroy(&opts, bl).is_ok();
+            tracing::info!("Destroying db: {bl_str}. Ok: {bl_ok}");
+
+            let wl_str = wl.to_path_buf().to_string_lossy().to_string();
+            tracing::info!("Destroying db: {wl_str}",);
+            let wl_ok = DB::destroy(&opts, wl).is_ok();
+            tracing::info!("Destroying db: {wl_str}. Ok: {wl_ok}");
+
+            let rw_str = rw.to_path_buf().to_string_lossy().to_string();
+            tracing::info!("Destroying db: {rw_str}",);
+            let rw_ok = DB::destroy(&opts, rw).is_ok();
+            tracing::info!("Destroying db: {rw_str}. Ok: {rw_ok}");
         });
     }
 }
