@@ -28,6 +28,7 @@ struct Args {
     #[arg(
         short,
         long,
+        env,
         value_name = "CONFIG_URL",
         default_value = "https://raw.githubusercontent.com/ragibkl/adblock-dns-server/master/data/configuration.yaml"
     )]
@@ -41,6 +42,7 @@ struct Args {
     #[arg(
         short,
         long,
+        env,
         value_name = "FORWARDERS",
         value_delimiter = ',',
         default_value = "8.8.8.8,8.8.4.4"
