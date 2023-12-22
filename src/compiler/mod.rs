@@ -3,10 +3,6 @@ mod parser;
 mod rewrites;
 mod whitelist;
 
-use std::sync::Arc;
-
-use tokio::sync::Mutex;
-
 use crate::{config::Config, db::AdblockDB};
 
 use self::{
@@ -33,34 +29,25 @@ impl AdblockCompiler {
         }
     }
 
-    pub async fn compile(&self, db: Arc<Mutex<AdblockDB>>) {
+    pub async fn compile(&self, db: &AdblockDB) {
         for wl in &self.whitelists {
             let domains = wl.load_whitelist().await;
-            {
-                let db_guard = db.lock().await;
-                for d in domains {
-                    db_guard.insert_whitelist(&d.0);
-                }
+            for d in domains {
+                db.insert_whitelist(&d.0);
             }
         }
 
         for bl in &self.blacklists {
             let domains = bl.load_blacklist().await;
-            {
-                let db_guard = db.lock().await;
-                for d in domains {
-                    db_guard.insert_blacklist(&d.0);
-                }
+            for d in domains {
+                db.insert_blacklist(&d.0);
             }
         }
 
         for rw in &self.rewrites {
             let cnames = rw.load_rewrites().await;
-            {
-                let db_guard = db.lock().await;
-                for c in cnames {
-                    db_guard.insert_rewrite(&c.domain.0, &c.alias.0);
-                }
+            for c in cnames {
+                db.insert_rewrite(&c.domain.0, &c.alias.0);
             }
         }
     }

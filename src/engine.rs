@@ -10,7 +10,7 @@ use crate::{
 
 static UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
 
-async fn update_definition(db: Arc<Mutex<AdblockDB>>, config_url: &FileOrUrl) {
+async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) {
     tracing::info!("Loading adblock config. config_url: {config_url}");
     let config = Config::load(config_url).await.unwrap();
     let compiler = AdblockCompiler::from_config(&config);
@@ -29,8 +29,7 @@ pub struct AdblockEngine {
 
 impl AdblockEngine {
     pub fn new(config_url: FileOrUrl) -> Self {
-        let db = Arc::new(Mutex::new(AdblockDB::new()));
-
+        let db = Default::default();
         Self { db, config_url }
     }
 
@@ -39,19 +38,20 @@ impl AdblockEngine {
         let config_url = self.config_url.clone();
 
         tokio::spawn(async move {
-            update_definition(db.clone(), &config_url).await;
-
             loop {
+                // instantiate a new_db and load adblock definition into it
+                let new_db = AdblockDB::default();
+                load_definition(&new_db, &config_url).await;
+
+                // swap the new_db in-place of the existing old_db
+                let old_db = {
+                    let mut db_guard = db.lock().await;
+                    std::mem::replace(&mut *db_guard, new_db)
+                };
+                old_db.destroy();
+
                 tracing::info!("Sleeping...");
                 tokio::time::sleep(UPDATE_INTERVAL).await;
-
-                let new_db = Arc::new(Mutex::new(AdblockDB::new()));
-                update_definition(new_db.clone(), &config_url).await;
-                let new_db = Arc::into_inner(new_db).unwrap().into_inner();
-
-                let mut db_guard = db.lock().await;
-                let old_db = std::mem::replace(&mut *db_guard, new_db);
-                old_db.destroy();
             }
         });
     }

@@ -92,3 +92,9 @@ impl AdblockDB {
         let _ = DB::destroy(&opts, rw);
     }
 }
+
+impl Default for AdblockDB {
+    fn default() -> Self {
+        Self::new()
+    }
+}
