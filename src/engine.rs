@@ -11,7 +11,7 @@ use crate::{
     db::AdblockDB,
 };
 
-static UPDATE_INTERVAL: Duration = Duration::from_secs(1); // 1 day
+static UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
 
 async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) {
     tracing::info!("Loading adblock config. config_url: {config_url}");
