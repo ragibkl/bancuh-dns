@@ -11,7 +11,7 @@ use crate::{
     db::AdblockDB,
 };
 
-static UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
+static UPDATE_INTERVAL: Duration = Duration::from_secs(1); // 1 day
 
 async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) {
     tracing::info!("Loading adblock config. config_url: {config_url}");
@@ -55,7 +55,8 @@ impl AdblockEngine {
                 load_definition(&new_db, &config_url).await;
 
                 // swap the new_db in-place of the existing old_db
-                *db.lock().unwrap() = new_db;
+                let old_db = std::mem::replace(&mut *db.lock().unwrap(), new_db);
+                old_db.destroy();
 
                 tracing::info!("Sleeping...");
 
@@ -63,7 +64,8 @@ impl AdblockEngine {
                     _ = tokio::time::sleep(UPDATE_INTERVAL) => {}
                     _ = cancellation_token.cancelled() => {
                         tracing::info!("Shutting down updater task...");
-                        drop(db);
+                        let owned_db = Arc::try_unwrap(db).unwrap().into_inner().unwrap();
+                        owned_db.destroy();
                         return;
                     }
                 }

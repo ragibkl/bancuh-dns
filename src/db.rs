@@ -48,23 +48,17 @@ impl DomainStore {
 
         Ok(Self { db })
     }
-}
 
-impl Drop for DomainStore {
-    fn drop(&mut self) {
+    pub fn destroy(self) {
         let path = self.db.path().to_path_buf();
+        let path_str = path.to_string_lossy().to_string();
+        let opts = Options::default();
+
+        tracing::info!("Destroying db: {path_str}");
         self.db.cancel_all_background_work(true);
-
-        tokio::task::spawn_blocking(move || {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-
-            let opts = Options::default();
-            let path_str = path.to_string_lossy().to_string();
-
-            tracing::info!("Destroying db: {path_str}");
-            let del_ok = DB::destroy(&opts, path).is_ok();
-            tracing::info!("Destroying db: {path_str}. Ok: {del_ok}");
-        });
+        drop(self);
+        let res = DB::destroy(&opts, path);
+        tracing::info!("Destroying db: {path_str}. DONE: {res:?}");
     }
 }
 
@@ -107,6 +101,12 @@ impl AdblockDB {
     pub fn get_rewrite(&self, domain: &str) -> Option<String> {
         let bytes = self.rw.db.get(domain).unwrap();
         bytes.map(|b| String::from_utf8(b).unwrap())
+    }
+
+    pub fn destroy(self) {
+        self.bl.destroy();
+        self.wl.destroy();
+        self.rw.destroy();
     }
 }
 
