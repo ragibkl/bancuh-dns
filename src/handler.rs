@@ -1,6 +1,11 @@
+use std::net::{Ipv4Addr, Ipv6Addr};
+
 use hickory_resolver::{
     error::ResolveErrorKind,
-    proto::rr::{rdata::CNAME, RData, Record},
+    proto::rr::{
+        rdata::{A, AAAA, CNAME},
+        RData, Record,
+    },
     Name,
 };
 use hickory_server::{
@@ -100,7 +105,26 @@ impl Handler {
 
         // check engine if domain is blocked
         if self.engine.is_blocked(&name.to_string()).await {
-            return Err(HandlerError::nx_domain(name.to_string()));
+            match request.query().query_type() {
+                hickory_resolver::proto::rr::RecordType::A => {
+                    let a = Ipv4Addr::new(0, 0, 0, 0);
+                    let a_rdata = RData::A(A(a));
+                    let a_record = Record::from_rdata(request.query().name().into(), 60, a_rdata);
+                    let records = vec![a_record];
+
+                    return self.send_response(request, responder, &records).await;
+                }
+                hickory_resolver::proto::rr::RecordType::AAAA => {
+                    let aaaa = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0);
+                    let aaaa_rdata = RData::AAAA(AAAA(aaaa));
+                    let aaaa_record =
+                        Record::from_rdata(request.query().name().into(), 60, aaaa_rdata);
+                    let records = vec![aaaa_record];
+
+                    return self.send_response(request, responder, &records).await;
+                }
+                _ => return Err(HandlerError::nx_domain(name.to_string())),
+            }
         }
 
         // fetch records from forward resolver and return them
