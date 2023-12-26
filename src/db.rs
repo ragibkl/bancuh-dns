@@ -13,27 +13,6 @@ fn rand_string() -> String {
         .collect()
 }
 
-fn domain_exists(db: &DB, key: &str) -> bool {
-    let parts: Vec<&str> = key.split('.').filter(|s| !s.is_empty()).collect();
-
-    let mut tests: Vec<String> = Vec::new();
-    let mut acc: Vec<String> = Vec::new();
-    for part in parts.iter().skip(1).rev() {
-        acc.splice(0..0, vec![part.to_string()]);
-        let test = format!("*.{}.", acc.join("."));
-        tests.push(test)
-    }
-    tests.push(key.to_string());
-
-    for test in tests.iter() {
-        if db.get(test).unwrap().is_some() {
-            return true;
-        }
-    }
-
-    false
-}
-
 #[derive(Debug)]
 pub struct DomainStore {
     db: DB,
@@ -47,6 +26,27 @@ impl DomainStore {
         let db = DB::open_default(path)?;
 
         Ok(Self { db })
+    }
+
+    pub fn contains(&self, domain: &str) -> bool {
+        let parts: Vec<&str> = domain.split('.').filter(|s| !s.is_empty()).collect();
+
+        let mut tests: Vec<String> = Vec::new();
+        let mut acc: Vec<String> = Vec::new();
+        for part in parts.iter().skip(1).rev() {
+            acc.splice(0..0, vec![part.to_string()]);
+            let test = format!("*.{}.", acc.join("."));
+            tests.push(test)
+        }
+        tests.push(domain.to_string());
+
+        for test in tests.iter() {
+            if self.db.get(test).unwrap().is_some() {
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn destroy(self) {
@@ -91,11 +91,11 @@ impl AdblockDB {
     }
 
     pub fn bl_exist(&self, domain: &str) -> bool {
-        domain_exists(&self.bl.db, domain)
+        self.bl.contains(domain)
     }
 
     pub fn wl_exist(&self, domain: &str) -> bool {
-        domain_exists(&self.wl.db, domain)
+        self.wl.contains(domain)
     }
 
     pub fn get_rewrite(&self, domain: &str) -> Option<String> {
