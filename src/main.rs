@@ -94,7 +94,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Stopping server");
     server.shutdown_gracefully().await?;
+    drop(server);
     tracing::info!("Stopping server. DONE");
+
+    tracing::info!("Waiting for exit");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    tracing::info!("Waiting for exit. DONE");
 
     Ok(())
 }

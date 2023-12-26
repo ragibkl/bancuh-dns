@@ -3,6 +3,8 @@ use std::{
     time::Duration,
 };
 
+use tokio_util::sync::CancellationToken;
+
 use crate::{
     compiler::AdblockCompiler,
     config::{Config, FileOrUrl},
@@ -26,16 +28,24 @@ async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) {
 pub struct AdblockEngine {
     db: Arc<Mutex<AdblockDB>>,
     config_url: FileOrUrl,
+    cancellation_token: CancellationToken,
 }
 
 impl AdblockEngine {
     pub fn new(config_url: FileOrUrl) -> Self {
         let db = Default::default();
-        Self { db, config_url }
+        let cancellation_token = CancellationToken::new();
+
+        Self {
+            db,
+            config_url,
+            cancellation_token,
+        }
     }
 
     pub fn start_update(&self) {
         let db = self.db.clone();
+        let cancellation_token = self.cancellation_token.clone();
         let config_url = self.config_url.clone();
 
         tokio::spawn(async move {
@@ -48,7 +58,15 @@ impl AdblockEngine {
                 *db.lock().unwrap() = new_db;
 
                 tracing::info!("Sleeping...");
-                tokio::time::sleep(UPDATE_INTERVAL).await;
+
+                tokio::select! {
+                    _ = tokio::time::sleep(UPDATE_INTERVAL) => {}
+                    _ = cancellation_token.cancelled() => {
+                        tracing::info!("Shutting down updater task...");
+                        drop(db);
+                        return;
+                    }
+                }
             }
         });
     }
@@ -78,5 +96,11 @@ impl AdblockEngine {
         }
 
         false
+    }
+}
+
+impl Drop for AdblockEngine {
+    fn drop(&mut self) {
+        self.cancellation_token.cancel();
     }
 }
