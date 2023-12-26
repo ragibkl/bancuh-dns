@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
-use rocksdb::{Options, DB};
+use rocksdb::{DBWithThreadMode, Options, SingleThreaded, ThreadMode, DB};
 
 fn rand_string() -> String {
     thread_rng()
@@ -11,7 +11,7 @@ fn rand_string() -> String {
         .collect()
 }
 
-fn domain_exists(db: &DB, key: &str) -> bool {
+fn domain_exists<T: ThreadMode>(db: &DBWithThreadMode<T>, key: &str) -> bool {
     let parts: Vec<&str> = key.split('.').filter(|s| !s.is_empty()).collect();
 
     let mut tests: Vec<String> = Vec::new();
@@ -33,49 +33,80 @@ fn domain_exists(db: &DB, key: &str) -> bool {
 }
 
 #[derive(Debug)]
+pub struct DomainStore {
+    db: DBWithThreadMode<SingleThreaded>,
+    path: PathBuf,
+}
+
+impl DomainStore {
+    pub fn new() -> Result<Self, rocksdb::Error> {
+        let dir: PathBuf = "./bancuh_db".parse().unwrap();
+        let rand_prefix = rand_string();
+        let path = dir.join(format!("{rand_prefix}-db"));
+        let db = DBWithThreadMode::<SingleThreaded>::open_default(&path)?;
+
+        Ok(Self { db, path })
+    }
+}
+
+impl Drop for DomainStore {
+    fn drop(&mut self) {
+        let path = self.path.to_path_buf();
+        self.db.cancel_all_background_work(true);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_micros(100)).await;
+
+            let opts = Options::default();
+
+            let path_str = path.to_path_buf().to_string_lossy().to_string();
+            tracing::info!("Destroying db: {path_str}",);
+            let del_ok = DB::destroy(&opts, path).is_ok();
+            tracing::info!("Destroying db: {path_str}. Ok: {del_ok}");
+
+            {}
+        });
+    }
+}
+
+#[derive(Debug)]
 pub struct AdblockDB {
-    bl: DB,
-    wl: DB,
-    rw: DB,
+    bl: DomainStore,
+    wl: DomainStore,
+    rw: DomainStore,
 }
 
 impl AdblockDB {
     pub fn new() -> Self {
-        let dir: PathBuf = "./bancuh_db".parse().unwrap();
-        let rand_prefix = rand_string();
-        let wl_path = dir.join(format!("{rand_prefix}-whitelist"));
-        let bl_path = dir.join(format!("{rand_prefix}-blacklist"));
-        let rw_path = dir.join(format!("{rand_prefix}-rewrites"));
-
-        let wl = DB::open_default(wl_path).unwrap();
-        let bl = DB::open_default(bl_path).unwrap();
-        let rw = DB::open_default(rw_path).unwrap();
+        let bl = DomainStore::new().unwrap();
+        let wl = DomainStore::new().unwrap();
+        let rw = DomainStore::new().unwrap();
 
         Self { bl, wl, rw }
     }
 
     pub fn insert_whitelist(&self, domain: &str) {
-        self.wl.put(format!("{domain}."), "true").unwrap();
+        self.wl.db.put(format!("{domain}."), "true").unwrap();
     }
 
     pub fn insert_blacklist(&self, domain: &str) {
-        self.bl.put(format!("{domain}."), "true").unwrap();
+        self.bl.db.put(format!("{domain}."), "true").unwrap();
     }
 
     pub fn insert_rewrite(&self, domain: &str, target: &str) {
-        self.rw.put(format!("{domain}."), target).unwrap();
+        self.rw.db.put(format!("{domain}."), target).unwrap();
     }
 
     pub fn bl_exist(&self, domain: &str) -> bool {
-        domain_exists(&self.bl, domain)
+        domain_exists(&self.bl.db, domain)
     }
 
     pub fn wl_exist(&self, domain: &str) -> bool {
-        domain_exists(&self.wl, domain)
+        domain_exists(&self.wl.db, domain)
     }
 
     pub fn get_rewrite(&self, domain: &str) -> Option<String> {
-        let bytes = self.rw.get(domain).unwrap();
+        let bytes = self.rw.db.get(domain).unwrap();
         bytes.map(|b| String::from_utf8(b).unwrap())
     }
 }
@@ -83,34 +114,5 @@ impl AdblockDB {
 impl Default for AdblockDB {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl Drop for AdblockDB {
-    fn drop(&mut self) {
-        let bl = self.bl.path().to_path_buf();
-        let wl = self.wl.path().to_path_buf();
-        let rw = self.rw.path().to_path_buf();
-
-        tokio::task::spawn_blocking(move || {
-            std::thread::sleep(std::time::Duration::from_micros(100));
-
-            let opts = Options::default();
-
-            let bl_str = bl.to_path_buf().to_string_lossy().to_string();
-            tracing::info!("Destroying db: {bl_str}",);
-            let bl_ok = DB::destroy(&opts, bl).is_ok();
-            tracing::info!("Destroying db: {bl_str}. Ok: {bl_ok}");
-
-            let wl_str = wl.to_path_buf().to_string_lossy().to_string();
-            tracing::info!("Destroying db: {wl_str}",);
-            let wl_ok = DB::destroy(&opts, wl).is_ok();
-            tracing::info!("Destroying db: {wl_str}. Ok: {wl_ok}");
-
-            let rw_str = rw.to_path_buf().to_string_lossy().to_string();
-            tracing::info!("Destroying db: {rw_str}",);
-            let rw_ok = DB::destroy(&opts, rw).is_ok();
-            tracing::info!("Destroying db: {rw_str}. Ok: {rw_ok}");
-        });
     }
 }
