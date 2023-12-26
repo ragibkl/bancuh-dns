@@ -31,17 +31,14 @@ impl DomainStore {
     pub fn contains(&self, domain: &str) -> bool {
         let parts: Vec<&str> = domain.split('.').filter(|s| !s.is_empty()).collect();
 
-        let mut tests: Vec<String> = Vec::new();
-        let mut acc: Vec<String> = Vec::new();
-        for part in parts.iter().skip(1).rev() {
-            acc.splice(0..0, vec![part.to_string()]);
-            let test = format!("*.{}.", acc.join("."));
-            tests.push(test)
+        let mut keys: Vec<String> = vec![domain.to_string()];
+        for i in 1..parts.len() {
+            let star_key = format!("*.{}.", parts[i..parts.len()].join("."));
+            keys.push(star_key);
         }
-        tests.push(domain.to_string());
 
-        for test in tests.iter() {
-            if self.db.get(test).unwrap().is_some() {
+        for key in keys.iter() {
+            if self.db.get(key).unwrap().is_some() {
                 return true;
             }
         }
