@@ -9,13 +9,15 @@ mod resolver;
 use std::{net::SocketAddr, time::Duration};
 
 use clap::Parser;
-use config::FileOrUrl;
-use engine::AdblockEngine;
 use hickory_server::{proto::udp::UdpSocket, ServerFuture};
-use resolver::create_resolver;
 use tokio::{net::TcpListener, signal};
 
-use crate::{config::Config, handler::Handler};
+use crate::{
+    config::{Config, FileOrUrl},
+    engine::AdblockEngine,
+    handler::Handler,
+    resolver::Resolver,
+};
 
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -71,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
     let engine = AdblockEngine::new(config_url);
     engine.start_update();
 
-    let resolver = create_resolver(&forwarders);
+    let resolver = Resolver::new(&forwarders);
     let handler = Handler::new(engine, resolver);
 
     tracing::info!("Starting server");

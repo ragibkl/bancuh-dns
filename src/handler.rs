@@ -1,7 +1,7 @@
 use hickory_resolver::{
     error::ResolveErrorKind,
-    proto::rr::{rdata::CNAME, RData, Record, RecordType},
-    Name, TokioAsyncResolver,
+    proto::rr::{rdata::CNAME, RData, Record},
+    Name,
 };
 use hickory_server::{
     authority::MessageResponseBuilder,
@@ -9,7 +9,7 @@ use hickory_server::{
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
 };
 
-use crate::engine::AdblockEngine;
+use crate::{engine::AdblockEngine, resolver::Resolver};
 
 #[derive(Debug, thiserror::Error)]
 #[error("HandlerError: {1}")]
@@ -51,11 +51,11 @@ impl From<hickory_resolver::error::ResolveError> for HandlerError {
 #[derive(Debug)]
 pub struct Handler {
     engine: AdblockEngine,
-    resolver: TokioAsyncResolver,
+    resolver: Resolver,
 }
 
 impl Handler {
-    pub fn new(engine: AdblockEngine, resolver: TokioAsyncResolver) -> Self {
+    pub fn new(engine: AdblockEngine, resolver: Resolver) -> Self {
         Self { engine, resolver }
     }
 }
@@ -90,7 +90,8 @@ impl Handler {
 
             // fetch records from forward resolver using the alias and return them
             let alias_records = self
-                .fetch_records(&alias, request.query().query_type())
+                .resolver
+                .lookup(&alias, request.query().query_type())
                 .await?;
             records.extend(alias_records);
 
@@ -104,27 +105,10 @@ impl Handler {
 
         // fetch records from forward resolver and return them
         let records = self
-            .fetch_records(&name.to_string(), request.query().query_type())
+            .resolver
+            .lookup(&name.to_string(), request.query().query_type())
             .await?;
         self.send_response(request, responder, &records).await
-    }
-
-    /// fetch records from forward resolver
-    async fn fetch_records(
-        &self,
-        name: &str,
-        query_type: RecordType,
-    ) -> Result<Vec<Record>, HandlerError> {
-        match self.resolver.lookup(name, query_type).await {
-            Ok(lookup) => Ok(lookup.records().to_owned()),
-            Err(err) => match err.kind() {
-                ResolveErrorKind::NoRecordsFound {
-                    response_code: ResponseCode::NoError,
-                    ..
-                } => Ok(Vec::new()),
-                _ => Err(err.into()),
-            },
-        }
     }
 
     /// build header and return response
