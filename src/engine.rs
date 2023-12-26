@@ -75,7 +75,7 @@ impl AdblockEngine {
 
     pub async fn get_redirect(&self, name: &str) -> Option<String> {
         let db_guard = self.db.lock().unwrap();
-        let alias = db_guard.get_rewrite(name);
+        let alias = db_guard.rewrites.get(name);
 
         if let Some(alias) = alias.as_deref() {
             tracing::info!("rewrite: {name} to: {alias}");
@@ -87,12 +87,12 @@ impl AdblockEngine {
     pub async fn is_blocked(&self, name: &str) -> bool {
         let db_guard = self.db.lock().unwrap();
 
-        if db_guard.wl_exist(name) {
+        if db_guard.whitelist.contains(name) {
             tracing::info!("whitelist: {name}");
             return false;
         }
 
-        if db_guard.bl_exist(name) {
+        if db_guard.blacklist.contains(name) {
             tracing::info!("blacklist: {name}");
             return true;
         }

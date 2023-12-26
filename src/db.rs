@@ -13,6 +13,14 @@ fn rand_string() -> String {
         .collect()
 }
 
+fn normalize_name(name: &str) -> String {
+    if name.ends_with('.') {
+        name.to_string()
+    } else {
+        format!("{name}.")
+    }
+}
+
 #[derive(Debug)]
 pub struct DomainStore {
     db: DB,
@@ -28,7 +36,18 @@ impl DomainStore {
         Ok(Self { db })
     }
 
-    pub fn contains(&self, domain: &str) -> bool {
+    pub fn put(&self, domain: &str) {
+        let domain = normalize_name(domain);
+        self.db.put(domain, "true").unwrap();
+    }
+
+    pub fn put_alias(&self, domain: &str, alias: &str) {
+        let domain = normalize_name(domain);
+        let alias = normalize_name(alias);
+        self.db.put(domain, alias).unwrap();
+    }
+
+    pub fn get(&self, domain: &str) -> Option<String> {
         let parts: Vec<&str> = domain.split('.').filter(|s| !s.is_empty()).collect();
 
         let mut keys: Vec<String> = vec![domain.to_string()];
@@ -38,12 +57,16 @@ impl DomainStore {
         }
 
         for key in keys.iter() {
-            if self.db.get(key).unwrap().is_some() {
-                return true;
+            if let Some(s) = self.db.get(key).unwrap() {
+                return Some(String::from_utf8(s).unwrap());
             }
         }
 
-        false
+        None
+    }
+
+    pub fn contains(&self, domain: &str) -> bool {
+        self.get(domain).is_some()
     }
 
     pub fn destroy(self) {
@@ -61,49 +84,28 @@ impl DomainStore {
 
 #[derive(Debug)]
 pub struct AdblockDB {
-    bl: DomainStore,
-    wl: DomainStore,
-    rw: DomainStore,
+    pub blacklist: DomainStore,
+    pub whitelist: DomainStore,
+    pub rewrites: DomainStore,
 }
 
 impl AdblockDB {
     pub fn new() -> Self {
-        let bl = DomainStore::new().unwrap();
-        let wl = DomainStore::new().unwrap();
-        let rw = DomainStore::new().unwrap();
+        let blacklist = DomainStore::new().unwrap();
+        let whitelist = DomainStore::new().unwrap();
+        let rewrites = DomainStore::new().unwrap();
 
-        Self { bl, wl, rw }
-    }
-
-    pub fn insert_whitelist(&self, domain: &str) {
-        self.wl.db.put(format!("{domain}."), "true").unwrap();
-    }
-
-    pub fn insert_blacklist(&self, domain: &str) {
-        self.bl.db.put(format!("{domain}."), "true").unwrap();
-    }
-
-    pub fn insert_rewrite(&self, domain: &str, target: &str) {
-        self.rw.db.put(format!("{domain}."), target).unwrap();
-    }
-
-    pub fn bl_exist(&self, domain: &str) -> bool {
-        self.bl.contains(domain)
-    }
-
-    pub fn wl_exist(&self, domain: &str) -> bool {
-        self.wl.contains(domain)
-    }
-
-    pub fn get_rewrite(&self, domain: &str) -> Option<String> {
-        let bytes = self.rw.db.get(domain).unwrap();
-        bytes.map(|b| String::from_utf8(b).unwrap())
+        Self {
+            blacklist,
+            whitelist,
+            rewrites,
+        }
     }
 
     pub fn destroy(self) {
-        self.bl.destroy();
-        self.wl.destroy();
-        self.rw.destroy();
+        self.blacklist.destroy();
+        self.whitelist.destroy();
+        self.rewrites.destroy();
     }
 }
 

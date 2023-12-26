@@ -33,21 +33,21 @@ impl AdblockCompiler {
         for wl in &self.whitelists {
             let domains = wl.load_whitelist().await;
             for d in domains {
-                db.insert_whitelist(&d.0);
+                db.whitelist.put(&d.0);
             }
         }
 
         for bl in &self.blacklists {
             let domains = bl.load_blacklist().await;
             for d in domains {
-                db.insert_blacklist(&d.0);
+                db.blacklist.put(&d.0);
             }
         }
 
         for rw in &self.rewrites {
             let cnames = rw.load_rewrites().await;
             for c in cnames {
-                db.insert_rewrite(&c.domain.0, &c.alias.0);
+                db.rewrites.put_alias(&c.domain.0, &c.alias.0);
             }
         }
     }
