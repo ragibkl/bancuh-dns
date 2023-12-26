@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
-use rocksdb::{DBWithThreadMode, Options, SingleThreaded, ThreadMode, DB};
+use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
+
+pub type DB = DBWithThreadMode<MultiThreaded>;
 
 fn rand_string() -> String {
     thread_rng()
@@ -11,7 +13,7 @@ fn rand_string() -> String {
         .collect()
 }
 
-fn domain_exists<T: ThreadMode>(db: &DBWithThreadMode<T>, key: &str) -> bool {
+fn domain_exists(db: &DB, key: &str) -> bool {
     let parts: Vec<&str> = key.split('.').filter(|s| !s.is_empty()).collect();
 
     let mut tests: Vec<String> = Vec::new();
@@ -34,8 +36,7 @@ fn domain_exists<T: ThreadMode>(db: &DBWithThreadMode<T>, key: &str) -> bool {
 
 #[derive(Debug)]
 pub struct DomainStore {
-    db: DBWithThreadMode<SingleThreaded>,
-    path: PathBuf,
+    db: DB,
 }
 
 impl DomainStore {
@@ -43,28 +44,26 @@ impl DomainStore {
         let dir: PathBuf = "./bancuh_db".parse().unwrap();
         let rand_prefix = rand_string();
         let path = dir.join(format!("{rand_prefix}-db"));
-        let db = DBWithThreadMode::<SingleThreaded>::open_default(&path)?;
+        let db = DB::open_default(path)?;
 
-        Ok(Self { db, path })
+        Ok(Self { db })
     }
 }
 
 impl Drop for DomainStore {
     fn drop(&mut self) {
-        let path = self.path.to_path_buf();
+        let path = self.db.path().to_path_buf();
         self.db.cancel_all_background_work(true);
 
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_micros(100)).await;
+        tokio::task::spawn_blocking(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1));
 
             let opts = Options::default();
+            let path_str = path.to_string_lossy().to_string();
 
-            let path_str = path.to_path_buf().to_string_lossy().to_string();
-            tracing::info!("Destroying db: {path_str}",);
+            tracing::info!("Destroying db: {path_str}");
             let del_ok = DB::destroy(&opts, path).is_ok();
             tracing::info!("Destroying db: {path_str}. Ok: {del_ok}");
-
-            {}
         });
     }
 }
