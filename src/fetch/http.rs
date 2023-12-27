@@ -25,7 +25,7 @@ impl FetchHttp {
                 .connect_timeout(Duration::from_secs(5))
                 .timeout(Duration::from_secs(60))
                 .build()
-                .unwrap();
+                .expect("Could not construct http client");
         }
 
         let mut last_error: FetchHTTPError = FetchHTTPError::Unknown;
