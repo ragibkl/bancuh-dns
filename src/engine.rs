@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use tokio_util::sync::CancellationToken;
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
     compiler::AdblockCompiler,
@@ -24,31 +24,40 @@ async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) {
     tracing::info!("Compiling adblock DONE");
 }
 
+pub struct UpdateHandle {
+    token: CancellationToken,
+    tracker: TaskTracker,
+}
+
+impl UpdateHandle {
+    pub async fn shutdown_gracefully(&self) {
+        self.token.cancel();
+        self.tracker.wait().await;
+    }
+}
+
 #[derive(Debug)]
 pub struct AdblockEngine {
     db: Arc<Mutex<AdblockDB>>,
     config_url: FileOrUrl,
-    cancellation_token: CancellationToken,
 }
 
 impl AdblockEngine {
     pub fn new(config_url: FileOrUrl) -> Self {
         let db = Arc::new(Mutex::new(AdblockDB::create().unwrap()));
-        let cancellation_token = CancellationToken::new();
 
-        Self {
-            db,
-            config_url,
-            cancellation_token,
-        }
+        Self { db, config_url }
     }
 
-    pub fn start_update(&self) {
+    pub fn start_update(&self) -> UpdateHandle {
         let db = self.db.clone();
-        let cancellation_token = self.cancellation_token.clone();
         let config_url = self.config_url.clone();
 
-        tokio::spawn(async move {
+        let tracker = TaskTracker::new();
+        let token = CancellationToken::new();
+
+        let cloned_token = token.clone();
+        tracker.spawn(async move {
             loop {
                 // instantiate a new_db and load adblock definition into it
                 let new_db = AdblockDB::create().unwrap();
@@ -62,16 +71,19 @@ impl AdblockEngine {
 
                 tokio::select! {
                     _ = tokio::time::sleep(UPDATE_INTERVAL) => {}
-                    _ = cancellation_token.cancelled() => {
+                    _ = cloned_token.cancelled() => {
                         tracing::info!("Shutting down updater task...");
                         let owned_db = Arc::try_unwrap(db).expect("Unexpected references to owned_db");
-                        let owned_db = owned_db.into_inner().expect("Could not lock");
+                        let owned_db = owned_db.into_inner().expect("Could not lock db");
                         owned_db.destroy();
                         return;
                     }
                 }
             }
         });
+        tracker.close();
+
+        UpdateHandle { token, tracker }
     }
 
     pub async fn get_redirect(&self, name: &str) -> Option<String> {
@@ -99,11 +111,5 @@ impl AdblockEngine {
         }
 
         false
-    }
-}
-
-impl Drop for AdblockEngine {
-    fn drop(&mut self) {
-        self.cancellation_token.cancel();
     }
 }

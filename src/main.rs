@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Validating adblock config. config_url: {config_url}. DONE");
 
     let engine = AdblockEngine::new(config_url);
-    engine.start_update();
+    let update_handle = engine.start_update();
 
     let resolver = Resolver::new(&forwarders);
     let handler = Handler::new(engine, resolver);
@@ -95,11 +95,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Stopping server");
     server.shutdown_gracefully().await?;
     drop(server);
+    update_handle.shutdown_gracefully().await;
     tracing::info!("Stopping server. DONE");
-
-    tracing::info!("Waiting for exit");
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    tracing::info!("Waiting for exit. DONE");
 
     Ok(())
 }
