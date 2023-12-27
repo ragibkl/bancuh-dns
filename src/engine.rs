@@ -55,7 +55,7 @@ impl AdblockEngine {
                 load_definition(&new_db, &config_url).await;
 
                 // swap the new_db in-place of the existing old_db and destroy old_db
-                let old_db = std::mem::replace(&mut *db.lock().unwrap(), new_db);
+                let old_db = std::mem::replace(&mut *db.lock().expect("Could not lock db"), new_db);
                 old_db.destroy();
 
                 tracing::info!("Sleeping...");
@@ -64,7 +64,8 @@ impl AdblockEngine {
                     _ = tokio::time::sleep(UPDATE_INTERVAL) => {}
                     _ = cancellation_token.cancelled() => {
                         tracing::info!("Shutting down updater task...");
-                        let owned_db = Arc::try_unwrap(db).unwrap().into_inner().unwrap();
+                        let owned_db = Arc::try_unwrap(db).expect("Unexpected references to owned_db");
+                        let owned_db = owned_db.into_inner().expect("Could not lock");
                         owned_db.destroy();
                         return;
                     }
@@ -74,7 +75,7 @@ impl AdblockEngine {
     }
 
     pub async fn get_redirect(&self, name: &str) -> Option<String> {
-        let db_guard = self.db.lock().unwrap();
+        let db_guard = self.db.lock().expect("Could not lock db");
         let alias = db_guard.rewrites.get(name).unwrap();
 
         if let Some(alias) = alias.as_deref() {
@@ -85,7 +86,7 @@ impl AdblockEngine {
     }
 
     pub async fn is_blocked(&self, name: &str) -> bool {
-        let db_guard = self.db.lock().unwrap();
+        let db_guard = self.db.lock().expect("Could not lock db");
 
         if db_guard.whitelist.contains(name).unwrap() {
             tracing::info!("whitelist: {name}");
