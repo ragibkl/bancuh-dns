@@ -89,9 +89,9 @@ impl Handler {
 
             // include a cname record in the response
             let cname = Name::from_utf8(&alias).unwrap();
-            let cname_rdata = RData::CNAME(CNAME(cname));
-            let cname_record = Record::from_rdata(request.query().name().into(), 60, cname_rdata);
-            records.push(cname_record);
+            let rdata = RData::CNAME(CNAME(cname));
+            let record = Record::from_rdata(request.query().name().into(), 60, rdata);
+            records.push(record);
 
             // fetch records from forward resolver using the alias and return them
             let alias_records = self
@@ -107,19 +107,18 @@ impl Handler {
         if self.engine.is_blocked(&name.to_string()).await {
             match request.query().query_type() {
                 hickory_resolver::proto::rr::RecordType::A => {
-                    let a = Ipv4Addr::new(0, 0, 0, 0);
-                    let a_rdata = RData::A(A(a));
-                    let a_record = Record::from_rdata(request.query().name().into(), 60, a_rdata);
-                    let records = vec![a_record];
+                    let ipv4_null_addr = Ipv4Addr::new(0, 0, 0, 0);
+                    let rdata = RData::A(A(ipv4_null_addr));
+                    let record = Record::from_rdata(request.query().name().into(), 60, rdata);
+                    let records = vec![record];
 
                     return self.send_response(request, responder, &records).await;
                 }
                 hickory_resolver::proto::rr::RecordType::AAAA => {
-                    let aaaa = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0);
-                    let aaaa_rdata = RData::AAAA(AAAA(aaaa));
-                    let aaaa_record =
-                        Record::from_rdata(request.query().name().into(), 60, aaaa_rdata);
-                    let records = vec![aaaa_record];
+                    let ipv6_null_addr = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0);
+                    let rdata = RData::AAAA(AAAA(ipv6_null_addr));
+                    let record = Record::from_rdata(request.query().name().into(), 60, rdata);
+                    let records = vec![record];
 
                     return self.send_response(request, responder, &records).await;
                 }

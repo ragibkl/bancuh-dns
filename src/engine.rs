@@ -33,7 +33,7 @@ pub struct AdblockEngine {
 
 impl AdblockEngine {
     pub fn new(config_url: FileOrUrl) -> Self {
-        let db = Default::default();
+        let db = Arc::new(Mutex::new(AdblockDB::create().unwrap()));
         let cancellation_token = CancellationToken::new();
 
         Self {
@@ -51,10 +51,10 @@ impl AdblockEngine {
         tokio::spawn(async move {
             loop {
                 // instantiate a new_db and load adblock definition into it
-                let new_db = AdblockDB::default();
+                let new_db = AdblockDB::create().unwrap();
                 load_definition(&new_db, &config_url).await;
 
-                // swap the new_db in-place of the existing old_db
+                // swap the new_db in-place of the existing old_db and destroy old_db
                 let old_db = std::mem::replace(&mut *db.lock().unwrap(), new_db);
                 old_db.destroy();
 
@@ -75,7 +75,7 @@ impl AdblockEngine {
 
     pub async fn get_redirect(&self, name: &str) -> Option<String> {
         let db_guard = self.db.lock().unwrap();
-        let alias = db_guard.rewrites.get(name);
+        let alias = db_guard.rewrites.get(name).unwrap();
 
         if let Some(alias) = alias.as_deref() {
             tracing::info!("rewrite: {name} to: {alias}");
@@ -87,12 +87,12 @@ impl AdblockEngine {
     pub async fn is_blocked(&self, name: &str) -> bool {
         let db_guard = self.db.lock().unwrap();
 
-        if db_guard.whitelist.contains(name) {
+        if db_guard.whitelist.contains(name).unwrap() {
             tracing::info!("whitelist: {name}");
             return false;
         }
 
-        if db_guard.blacklist.contains(name) {
+        if db_guard.blacklist.contains(name).unwrap() {
             tracing::info!("blacklist: {name}");
             return true;
         }

@@ -1,14 +1,15 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, string::FromUtf8Error};
 
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
+use thiserror::Error;
 
 pub type DB = DBWithThreadMode<MultiThreaded>;
 
 fn rand_string() -> String {
     thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(30)
+        .take(10)
         .map(char::from)
         .collect()
 }
@@ -21,14 +22,23 @@ fn normalize_name(name: &str) -> String {
     }
 }
 
+#[derive(Debug, Error)]
+pub enum DBError {
+    #[error(transparent)]
+    RocksDB(#[from] rocksdb::Error),
+
+    #[error(transparent)]
+    FromUtf8(#[from] FromUtf8Error),
+}
+
 #[derive(Debug)]
 pub struct DomainStore {
     db: DB,
 }
 
 impl DomainStore {
-    pub fn new() -> Result<Self, rocksdb::Error> {
-        let dir: PathBuf = "./bancuh_db".parse().unwrap();
+    pub fn create() -> Result<Self, DBError> {
+        let dir: PathBuf = "./bancuh_db".parse().expect("Unexpected path parse error");
         let rand_prefix = rand_string();
         let path = dir.join(format!("{rand_prefix}-db"));
         let db = DB::open_default(path)?;
@@ -36,18 +46,18 @@ impl DomainStore {
         Ok(Self { db })
     }
 
-    pub fn put(&self, domain: &str) {
+    pub fn put(&self, domain: &str) -> Result<(), DBError> {
         let domain = normalize_name(domain);
-        self.db.put(domain, "true").unwrap();
+        Ok(self.db.put(domain, "true")?)
     }
 
-    pub fn put_alias(&self, domain: &str, alias: &str) {
+    pub fn put_alias(&self, domain: &str, alias: &str) -> Result<(), DBError> {
         let domain = normalize_name(domain);
         let alias = normalize_name(alias);
-        self.db.put(domain, alias).unwrap();
+        Ok(self.db.put(domain, alias)?)
     }
 
-    pub fn get(&self, domain: &str) -> Option<String> {
+    pub fn get(&self, domain: &str) -> Result<Option<String>, DBError> {
         let parts: Vec<&str> = domain.split('.').filter(|s| !s.is_empty()).collect();
 
         let mut keys: Vec<String> = vec![domain.to_string()];
@@ -57,16 +67,16 @@ impl DomainStore {
         }
 
         for key in keys.iter() {
-            if let Some(s) = self.db.get(key).unwrap() {
-                return Some(String::from_utf8(s).unwrap());
+            if let Some(s) = self.db.get(key)? {
+                return Ok(Some(String::from_utf8(s)?));
             }
         }
 
-        None
+        Ok(None)
     }
 
-    pub fn contains(&self, domain: &str) -> bool {
-        self.get(domain).is_some()
+    pub fn contains(&self, domain: &str) -> Result<bool, DBError> {
+        self.get(domain).map(|o| o.is_some())
     }
 
     pub fn destroy(self) {
@@ -90,27 +100,21 @@ pub struct AdblockDB {
 }
 
 impl AdblockDB {
-    pub fn new() -> Self {
-        let blacklist = DomainStore::new().unwrap();
-        let whitelist = DomainStore::new().unwrap();
-        let rewrites = DomainStore::new().unwrap();
+    pub fn create() -> Result<Self, DBError> {
+        let blacklist = DomainStore::create()?;
+        let whitelist = DomainStore::create()?;
+        let rewrites = DomainStore::create()?;
 
-        Self {
+        Ok(Self {
             blacklist,
             whitelist,
             rewrites,
-        }
+        })
     }
 
     pub fn destroy(self) {
         self.blacklist.destroy();
         self.whitelist.destroy();
         self.rewrites.destroy();
-    }
-}
-
-impl Default for AdblockDB {
-    fn default() -> Self {
-        Self::new()
     }
 }
