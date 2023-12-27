@@ -14,6 +14,10 @@ fn rand_string() -> String {
         .collect()
 }
 
+fn rand_name() -> String {
+    format!("db-{}", rand_string())
+}
+
 fn normalize_name(name: &str) -> String {
     if name.ends_with('.') {
         name.to_string()
@@ -39,8 +43,7 @@ pub struct DomainStore {
 impl DomainStore {
     pub fn create() -> Result<Self, DBError> {
         let dir: PathBuf = "./bancuh_db".parse().expect("Unexpected path parse error");
-        let rand_prefix = rand_string();
-        let path = dir.join(format!("{rand_prefix}-db"));
+        let path = dir.join(rand_name());
         let db = DB::open_default(path)?;
 
         Ok(Self { db })
