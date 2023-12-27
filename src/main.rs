@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     Config::load(&config_url).await?;
     tracing::info!("Validating adblock config. config_url: {config_url}. DONE");
 
-    let engine = AdblockEngine::new(config_url);
+    let engine = AdblockEngine::new(config_url)?;
     let update_handle = engine.start_update();
 
     let resolver = Resolver::new(&forwarders);

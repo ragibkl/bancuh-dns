@@ -44,17 +44,23 @@ impl From<std::io::Error> for HandlerError {
 }
 
 impl From<hickory_resolver::error::ResolveError> for HandlerError {
-    fn from(value: hickory_resolver::error::ResolveError) -> Self {
-        match value.kind() {
+    fn from(err: hickory_resolver::error::ResolveError) -> Self {
+        match err.kind() {
             ResolveErrorKind::NoRecordsFound { query, .. } => Self::nx_domain(query.name()),
-            _ => Self::serv_fail(value),
+            _ => Self::serv_fail(err),
         }
     }
 }
 
 impl From<hickory_resolver::proto::error::ProtoError> for HandlerError {
-    fn from(value: hickory_resolver::proto::error::ProtoError) -> Self {
-        Self::serv_fail(value.to_string())
+    fn from(err: hickory_resolver::proto::error::ProtoError) -> Self {
+        Self::serv_fail(err)
+    }
+}
+
+impl From<crate::engine::EngineError> for HandlerError {
+    fn from(err: crate::engine::EngineError) -> Self {
+        Self::serv_fail(err)
     }
 }
 
@@ -90,7 +96,7 @@ impl Handler {
         let name = request.query().name();
 
         // check engine for domain override redirection
-        if let Some(alias) = self.engine.get_redirect(&name.to_string()).await {
+        if let Some(alias) = self.engine.get_redirect(&name.to_string()).await? {
             let mut records = Vec::new();
 
             // include a cname record in the response
@@ -110,7 +116,7 @@ impl Handler {
         }
 
         // check engine if domain is blocked
-        if self.engine.is_blocked(&name.to_string()).await {
+        if self.engine.is_blocked(&name.to_string()).await? {
             match request.query().query_type() {
                 hickory_resolver::proto::rr::RecordType::A => {
                     let ipv4_null_addr = Ipv4Addr::new(0, 0, 0, 0);

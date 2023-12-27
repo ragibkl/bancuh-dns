@@ -3,25 +3,29 @@ use std::{
     time::Duration,
 };
 
+use thiserror::Error;
+use tokio::task::JoinHandle;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
     compiler::AdblockCompiler,
-    config::{Config, FileOrUrl},
+    config::{Config, FileOrUrl, LoadConfigError},
     db::AdblockDB,
 };
 
 static UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
 
-async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) {
+async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) -> Result<(), LoadConfigError> {
     tracing::info!("Loading adblock config. config_url: {config_url}");
-    let config = Config::load(config_url).await.unwrap();
+    let config = Config::load(config_url).await?;
     let compiler = AdblockCompiler::from_config(&config);
     tracing::info!("Loading adblock config. config_url: {config_url}. DONE");
 
     tracing::info!("Compiling adblock");
     compiler.compile(db).await;
     tracing::info!("Compiling adblock DONE");
+
+    Ok(())
 }
 
 pub struct UpdateHandle {
@@ -34,6 +38,19 @@ impl UpdateHandle {
         self.token.cancel();
         self.tracker.wait().await;
     }
+
+    pub async fn task_terminated(&self) {
+        self.tracker.wait().await;
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum EngineError {
+    #[error(transparent)]
+    DB(#[from] crate::db::DBError),
+
+    #[error(transparent)]
+    LoadConfig(#[from] crate::config::LoadConfigError),
 }
 
 #[derive(Debug)]
@@ -43,10 +60,10 @@ pub struct AdblockEngine {
 }
 
 impl AdblockEngine {
-    pub fn new(config_url: FileOrUrl) -> Self {
-        let db = Arc::new(Mutex::new(AdblockDB::create().unwrap()));
+    pub fn new(config_url: FileOrUrl) -> Result<Self, EngineError> {
+        let db = Arc::new(Mutex::new(AdblockDB::create()?));
 
-        Self { db, config_url }
+        Ok(Self { db, config_url })
     }
 
     pub fn start_update(&self) -> UpdateHandle {
@@ -60,8 +77,8 @@ impl AdblockEngine {
         tracker.spawn(async move {
             loop {
                 // instantiate a new_db and load adblock definition into it
-                let new_db = AdblockDB::create().unwrap();
-                load_definition(&new_db, &config_url).await;
+                let new_db = AdblockDB::create()?;
+                load_definition(&new_db, &config_url).await?;
 
                 // swap the new_db in-place of the existing old_db and destroy old_db
                 let old_db = std::mem::replace(&mut *db.lock().expect("Could not lock db"), new_db);
@@ -76,7 +93,8 @@ impl AdblockEngine {
                         let owned_db = Arc::try_unwrap(db).expect("Unexpected references to owned_db");
                         let owned_db = owned_db.into_inner().expect("Could not lock db");
                         owned_db.destroy();
-                        return;
+
+                        return Ok::<(), EngineError>(());
                     }
                 }
             }
@@ -86,30 +104,30 @@ impl AdblockEngine {
         UpdateHandle { token, tracker }
     }
 
-    pub async fn get_redirect(&self, name: &str) -> Option<String> {
+    pub async fn get_redirect(&self, name: &str) -> Result<Option<String>, EngineError> {
         let db_guard = self.db.lock().expect("Could not lock db");
-        let alias = db_guard.rewrites.get(name).unwrap();
+        let alias = db_guard.rewrites.get(name)?;
 
         if let Some(alias) = alias.as_deref() {
             tracing::info!("rewrite: {name} to: {alias}");
         }
 
-        alias
+        Ok(alias)
     }
 
-    pub async fn is_blocked(&self, name: &str) -> bool {
+    pub async fn is_blocked(&self, name: &str) -> Result<bool, EngineError> {
         let db_guard = self.db.lock().expect("Could not lock db");
 
-        if db_guard.whitelist.contains(name).unwrap() {
+        if db_guard.whitelist.contains(name)? {
             tracing::info!("whitelist: {name}");
-            return false;
+            return Ok(false);
         }
 
-        if db_guard.blacklist.contains(name).unwrap() {
+        if db_guard.blacklist.contains(name)? {
             tracing::info!("blacklist: {name}");
-            return true;
+            return Ok(true);
         }
 
-        false
+        Ok(false)
     }
 }
