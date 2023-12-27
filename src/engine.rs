@@ -38,7 +38,7 @@ impl UpdateHandle {
         self.tracker.wait().await;
     }
 
-    pub async fn task_terminated(&self) {
+    pub async fn task_killed(&self) {
         self.tracker.wait().await;
     }
 }

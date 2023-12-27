@@ -83,13 +83,18 @@ async fn main() -> anyhow::Result<()> {
     server.register_socket(UdpSocket::bind(socket_addr).await?);
     tracing::info!("Starting server. DONE");
 
-    match signal::ctrl_c().await {
-        Ok(()) => {
-            tracing::info!("Received shutdown signal");
-        }
-        Err(err) => {
-            tracing::info!("Unable to listen for shutdown signal: {err}");
-        }
+    tokio::select! {
+        res = signal::ctrl_c() => match res {
+            Ok(()) => {
+                tracing::info!("Received shutdown signal");
+            }
+            Err(err) => {
+                tracing::info!("Unable to listen for shutdown signal: {err}");
+            }
+        },
+        _ = update_handle.task_killed() => {
+            tracing::info!("Updater task killed prematurely");
+        },
     }
 
     tracing::info!("Stopping server");
