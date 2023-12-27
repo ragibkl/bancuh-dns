@@ -52,6 +52,12 @@ impl From<hickory_resolver::error::ResolveError> for HandlerError {
     }
 }
 
+impl From<hickory_resolver::proto::error::ProtoError> for HandlerError {
+    fn from(value: hickory_resolver::proto::error::ProtoError) -> Self {
+        Self::serv_fail(value.to_string())
+    }
+}
+
 /// DNS Request Handler
 #[derive(Debug)]
 pub struct Handler {
@@ -88,7 +94,7 @@ impl Handler {
             let mut records = Vec::new();
 
             // include a cname record in the response
-            let cname = Name::from_utf8(&alias).unwrap();
+            let cname = Name::from_utf8(&alias)?;
             let rdata = RData::CNAME(CNAME(cname));
             let record = Record::from_rdata(request.query().name().into(), 60, rdata);
             records.push(record);
