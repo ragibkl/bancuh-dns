@@ -4,7 +4,6 @@ use std::{
 };
 
 use thiserror::Error;
-use tokio::task::JoinHandle;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
