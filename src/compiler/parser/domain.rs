@@ -8,7 +8,8 @@ pub struct Domain(pub String);
 
 fn parse_domain(value: &str) -> Option<Domain> {
     lazy_static! {
-        static ref RE: Regex = Regex::new(r"(?P<domain>.{2,200}\.[a-z]{2,6})").unwrap();
+        static ref RE: Regex =
+            Regex::new(r"(?P<domain>.{2,200}\.[a-z]{2,6})").expect("Invalid regex");
     }
 
     RE.captures(value)

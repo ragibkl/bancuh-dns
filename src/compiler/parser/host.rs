@@ -14,7 +14,7 @@ pub fn parse_host(value: &str) -> Option<Host> {
         static ref RE: Regex = Regex::new(
             r"(?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(?P<domain>.{2,200}\.[a-z]{2,6})"
         )
-        .unwrap();
+        .expect("Invalid regex");
     }
 
     let captures = match RE.captures(value) {

@@ -70,8 +70,8 @@ async fn main() -> anyhow::Result<()> {
     Config::load(&config_url).await?;
     tracing::info!("Validating adblock config. config_url: {config_url}. DONE");
 
-    let engine = AdblockEngine::new(config_url);
-    engine.start_update();
+    let engine = AdblockEngine::new(config_url)?;
+    let update_handle = engine.start_update();
 
     let resolver = Resolver::new(&forwarders);
     let handler = Handler::new(engine, resolver);
@@ -83,17 +83,24 @@ async fn main() -> anyhow::Result<()> {
     server.register_socket(UdpSocket::bind(socket_addr).await?);
     tracing::info!("Starting server. DONE");
 
-    match signal::ctrl_c().await {
-        Ok(()) => {
-            tracing::info!("Received shutdown signal");
-        }
-        Err(err) => {
-            tracing::info!("Unable to listen for shutdown signal: {err}");
-        }
+    tokio::select! {
+        res = signal::ctrl_c() => match res {
+            Ok(()) => {
+                tracing::info!("Received shutdown signal");
+            }
+            Err(err) => {
+                tracing::info!("Unable to listen for shutdown signal: {err}");
+            }
+        },
+        _ = update_handle.task_killed() => {
+            tracing::info!("Updater task killed prematurely");
+        },
     }
 
     tracing::info!("Stopping server");
     server.shutdown_gracefully().await?;
+    drop(server);
+    update_handle.shutdown_gracefully().await;
     tracing::info!("Stopping server. DONE");
 
     Ok(())
