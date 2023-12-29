@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use hickory_resolver::{
     config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts},
@@ -9,14 +9,15 @@ use hickory_resolver::{
     },
     TokioAsyncResolver,
 };
+use itertools::Itertools;
 
-pub fn create_resolver(forwarders: &[String]) -> TokioAsyncResolver {
-    tracing::info!("Setting up forwarders: {}", forwarders.to_vec().join(", "));
+pub fn create_resolver(forwarders: &[IpAddr]) -> TokioAsyncResolver {
+    tracing::info!("Setting up forwarders: {}", forwarders.iter().join(", "));
 
     let mut config = ResolverConfig::new();
     forwarders.iter().for_each(|f| {
         tracing::info!("Setting up forwarder: {f}");
-        let addr: SocketAddr = format!("{f}:53").parse().unwrap();
+        let addr = SocketAddr::new(*f, 53);
         let name_server = NameServerConfig::new(addr, Protocol::Udp);
         config.add_name_server(name_server);
     });
@@ -32,7 +33,7 @@ pub struct Resolver {
 }
 
 impl Resolver {
-    pub fn new(forwarders: &[String]) -> Self {
+    pub fn new(forwarders: &[IpAddr]) -> Self {
         let resolver = create_resolver(forwarders);
         Self { resolver }
     }

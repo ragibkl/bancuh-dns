@@ -6,10 +6,14 @@ mod fetch;
 mod handler;
 mod resolver;
 
-use std::{net::SocketAddr, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    time::Duration,
+};
 
 use clap::Parser;
 use hickory_server::{proto::udp::UdpSocket, ServerFuture};
+use itertools::Itertools;
 use tokio::{net::TcpListener, signal};
 
 use crate::{
@@ -49,7 +53,7 @@ struct Args {
         value_delimiter = ',',
         default_value = "8.8.8.8,8.8.4.4"
     )]
-    forwarders: Vec<String>,
+    forwarders: Vec<IpAddr>,
 }
 
 #[tokio::main]
@@ -64,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("config_url: {config_url}");
     tracing::info!("port: {port}");
-    tracing::info!("forwarders: [{}]", forwarders.join(", "));
+    tracing::info!("forwarders: [{}]", forwarders.iter().join(", "));
 
     tracing::info!("Validating adblock config. config_url: {config_url}");
     Config::load(&config_url).await?;
