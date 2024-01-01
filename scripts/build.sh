@@ -13,7 +13,7 @@ then
     TAG=$BRANCH
 fi
 
-REGISTRY_TAG="ragibkl/bancuh_dns:$TAG"
+REGISTRY_TAG="ragibkl/bancuh-dns:$TAG"
 echo "WORKDIR=$WORKDIR"
 echo "BRANCH=$BRANCH"
 echo "TAG=$TAG"
