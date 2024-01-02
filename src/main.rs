@@ -29,7 +29,7 @@ use crate::{
 };
 
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
-const UPDATE_INTERVAL: Duration = Duration::from_secs(5); // 1 day
+const UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
 
 #[derive(Parser, Debug)]
 #[command(name = "Bancuh DNS")]
@@ -128,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting dns server");
     let mut server = ServerFuture::new(handler);
-    let socket_addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let socket_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
     server.register_listener(TcpListener::bind(&socket_addr).await?, TCP_TIMEOUT);
     server.register_socket(UdpSocket::bind(socket_addr).await?);
     tracing::info!("Starting dns server. DONE");
