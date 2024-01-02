@@ -20,7 +20,9 @@ Key strenghts:
 - Automatic daily updates of blacklist sources
 - Ability to load custom blacklist sources
 
+This project is currently used in my [Adblock DNS Server](https://github.com/ragibkl/adblock-dns-server) to serve as the main Adblock DNS service.
+
 ## Getting started
 
 The best way to run this project is to use `Docker` and `Docker Compose`.
-Please head over to the [Adblock DNS Server - Getting Started](https://github.com/ragibkl/adblock-dns-server#getting-started) guide for a guided instructions.
+Please head over to the [Adblock DNS Server - Getting Started](https://github.com/ragibkl/adblock-dns-server#getting-started) guide for instructions.
