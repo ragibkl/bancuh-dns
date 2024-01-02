@@ -103,6 +103,7 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("engine-update running db update");
             if let Err(err) = cloned_engine.run_update().await {
                 tracing::info!("engine-update running db update. ERROR: {err}");
+                cloned_token.cancel();
                 return;
             }
             tracing::info!("engine-update running db update. DONE");
