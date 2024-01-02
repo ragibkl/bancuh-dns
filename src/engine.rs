@@ -1,18 +1,12 @@
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
 
 use thiserror::Error;
-use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
     compiler::AdblockCompiler,
     config::{Config, FileOrUrl, LoadConfigError},
     db::AdblockDB,
 };
-
-static UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
 
 async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) -> Result<(), LoadConfigError> {
     tracing::info!("Loading adblock config. config_url: {config_url}");
@@ -25,22 +19,6 @@ async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) -> Result<(), L
     tracing::info!("Compiling adblock DONE");
 
     Ok(())
-}
-
-pub struct UpdateHandle {
-    token: CancellationToken,
-    tracker: TaskTracker,
-}
-
-impl UpdateHandle {
-    pub async fn shutdown_gracefully(&self) {
-        self.token.cancel();
-        self.tracker.wait().await;
-    }
-
-    pub async fn task_killed(&self) {
-        self.tracker.wait().await;
-    }
 }
 
 #[derive(Debug, Error)]
@@ -65,42 +43,18 @@ impl AdblockEngine {
         Ok(Self { db, config_url })
     }
 
-    pub fn start_update(&self) -> UpdateHandle {
+    pub async fn run_update(&self) -> Result<(), EngineError> {
         let db = self.db.clone();
         let config_url = self.config_url.clone();
 
-        let tracker = TaskTracker::new();
-        let token = CancellationToken::new();
+        // instantiate a new_db and load adblock definition into it
+        let new_db = AdblockDB::create()?;
+        load_definition(&new_db, &config_url).await?;
 
-        let cloned_token = token.clone();
-        tracker.spawn(async move {
-            loop {
-                // instantiate a new_db and load adblock definition into it
-                let new_db = AdblockDB::create()?;
-                load_definition(&new_db, &config_url).await?;
+        // swap the new_db in-place of the existing old_db and destroy old_db
+        *db.lock().expect("Could not lock db") = new_db;
 
-                // swap the new_db in-place of the existing old_db and destroy old_db
-                let old_db = std::mem::replace(&mut *db.lock().expect("Could not lock db"), new_db);
-                old_db.destroy();
-
-                tracing::info!("Sleeping...");
-
-                tokio::select! {
-                    _ = tokio::time::sleep(UPDATE_INTERVAL) => {}
-                    _ = cloned_token.cancelled() => {
-                        tracing::info!("Shutting down updater task...");
-                        let owned_db = Arc::try_unwrap(db).expect("Unexpected references to owned_db");
-                        let owned_db = owned_db.into_inner().expect("Could not lock db");
-                        owned_db.destroy();
-
-                        return Ok::<(), EngineError>(());
-                    }
-                }
-            }
-        });
-        tracker.close();
-
-        UpdateHandle { token, tracker }
+        Ok(())
     }
 
     pub async fn get_redirect(&self, name: &str) -> Result<Option<String>, EngineError> {

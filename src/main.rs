@@ -8,13 +8,18 @@ mod resolver;
 
 use std::{
     net::{IpAddr, SocketAddr},
+    sync::Arc,
     time::Duration,
 };
 
 use clap::Parser;
 use hickory_server::{proto::udp::UdpSocket, ServerFuture};
 use itertools::Itertools;
-use tokio::{net::TcpListener, signal};
+use tokio::{
+    net::TcpListener,
+    signal::unix::{signal, SignalKind},
+};
+use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
     config::{Config, FileOrUrl},
@@ -24,6 +29,7 @@ use crate::{
 };
 
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
+const UPDATE_INTERVAL: Duration = Duration::from_secs(5); // 1 day
 
 #[derive(Parser, Debug)]
 #[command(name = "Bancuh DNS")]
@@ -56,6 +62,16 @@ struct Args {
     forwarders: Vec<IpAddr>,
 }
 
+async fn sigint() -> std::io::Result<()> {
+    signal(SignalKind::interrupt())?.recv().await;
+    Ok(())
+}
+
+async fn sigterm() -> std::io::Result<()> {
+    signal(SignalKind::terminate())?.recv().await;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -74,37 +90,77 @@ async fn main() -> anyhow::Result<()> {
     Config::load(&config_url).await?;
     tracing::info!("Validating adblock config. config_url: {config_url}. DONE");
 
-    let engine = AdblockEngine::new(config_url)?;
-    let update_handle = engine.start_update();
+    let engine = Arc::new(AdblockEngine::new(config_url)?);
+
+    let tracker = TaskTracker::new();
+    let token = CancellationToken::new();
+
+    tracing::info!("Starting engine-update task");
+    let cloned_engine = engine.clone();
+    let cloned_token = token.clone();
+    tracker.spawn(async move {
+        loop {
+            tracing::info!("engine-update running db update");
+            if let Err(err) = cloned_engine.run_update().await {
+                tracing::info!("engine-update running db update. ERROR: {err}");
+                return;
+            }
+            tracing::info!("engine-update running db update. DONE");
+
+            tracing::info!("engine-update sleeping for 1 day");
+            tokio::select! {
+                _ = tokio::time::sleep(UPDATE_INTERVAL) => {
+                    tracing::info!("engine-update waking up");
+                }
+                _ = cloned_token.cancelled() => {
+                    tracing::info!("engine-update received cancel signal");
+                    return;
+                }
+            }
+        }
+    });
+    tracing::info!("Starting engine-update task. DONE");
+
+    tracker.close();
 
     let resolver = Resolver::new(&forwarders);
     let handler = Handler::new(engine, resolver);
 
-    tracing::info!("Starting server");
+    tracing::info!("Starting dns server");
     let mut server = ServerFuture::new(handler);
-    let socket_addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
+    let socket_addr = SocketAddr::from(([0, 0, 0, 0], port));
     server.register_listener(TcpListener::bind(&socket_addr).await?, TCP_TIMEOUT);
     server.register_socket(UdpSocket::bind(socket_addr).await?);
-    tracing::info!("Starting server. DONE");
+    tracing::info!("Starting dns server. DONE");
 
     tokio::select! {
-        res = signal::ctrl_c() => match res {
+        res = sigint() => match res {
             Ok(()) => {
-                tracing::info!("Received shutdown signal");
+                tracing::info!("Received sigint signal");
             }
             Err(err) => {
-                tracing::info!("Unable to listen for shutdown signal: {err}");
+                tracing::info!("Unable to listen for sigint signal: {err}");
             }
         },
-        _ = update_handle.task_killed() => {
-            tracing::info!("Updater task killed prematurely");
+        res = sigterm() => match res {
+            Ok(()) => {
+                tracing::info!("Received sigterm signal");
+            }
+            Err(err) => {
+                tracing::info!("Unable to listen for sigterm signal: {err}");
+            }
+        },
+        _ = tracker.wait() => {
+            tracing::info!("Tasks ended prematurely");
         },
     }
 
+    tracing::info!("Shutting down tasks");
+    token.cancel();
+    tracing::info!("Waiting for tasks to end");
+    tracker.wait().await;
     tracing::info!("Stopping server");
     server.shutdown_gracefully().await?;
-    drop(server);
-    update_handle.shutdown_gracefully().await;
     tracing::info!("Stopping server. DONE");
 
     Ok(())

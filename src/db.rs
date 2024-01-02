@@ -37,41 +37,53 @@ pub enum DBError {
 
 #[derive(Debug)]
 pub struct DomainStore {
-    db: DB,
+    db: Option<DB>,
 }
 
 impl DomainStore {
     pub fn create() -> Result<Self, DBError> {
         let dir: PathBuf = "./bancuh_db".parse().expect("Unexpected path parse error");
         let path = dir.join(rand_name());
+
         let db = DB::open_default(path)?;
+        let db = Some(db);
 
         Ok(Self { db })
     }
 
     pub fn put(&self, domain: &str) -> Result<(), DBError> {
-        let domain = normalize_name(domain);
-        Ok(self.db.put(domain, "true")?)
+        if let Some(db) = &self.db {
+            let domain = normalize_name(domain);
+            db.put(domain, "true")?;
+        }
+
+        Ok(())
     }
 
     pub fn put_alias(&self, domain: &str, alias: &str) -> Result<(), DBError> {
-        let domain = normalize_name(domain);
-        let alias = normalize_name(alias);
-        Ok(self.db.put(domain, alias)?)
+        if let Some(db) = &self.db {
+            let domain = normalize_name(domain);
+            let alias = normalize_name(alias);
+            db.put(domain, alias)?;
+        }
+
+        Ok(())
     }
 
     pub fn get(&self, domain: &str) -> Result<Option<String>, DBError> {
-        let parts: Vec<&str> = domain.split('.').filter(|s| !s.is_empty()).collect();
+        if let Some(db) = &self.db {
+            let parts: Vec<&str> = domain.split('.').filter(|s| !s.is_empty()).collect();
 
-        let mut keys: Vec<String> = vec![domain.to_string()];
-        for i in 1..parts.len() {
-            let star_key = format!("*.{}.", parts[i..parts.len()].join("."));
-            keys.push(star_key);
-        }
+            let mut keys: Vec<String> = vec![domain.to_string()];
+            for i in 1..parts.len() {
+                let star_key = format!("*.{}.", parts[i..parts.len()].join("."));
+                keys.push(star_key);
+            }
 
-        for key in keys.iter() {
-            if let Some(s) = self.db.get(key)? {
-                return Ok(Some(String::from_utf8(s)?));
+            for key in keys.iter() {
+                if let Some(s) = db.get(key)? {
+                    return Ok(Some(String::from_utf8(s)?));
+                }
             }
         }
 
@@ -81,17 +93,22 @@ impl DomainStore {
     pub fn contains(&self, domain: &str) -> Result<bool, DBError> {
         self.get(domain).map(|o| o.is_some())
     }
+}
 
-    pub fn destroy(self) {
-        let path = self.db.path().to_path_buf();
-        let path_str = path.to_string_lossy().to_string();
-        let opts = Options::default();
+impl Drop for DomainStore {
+    fn drop(&mut self) {
+        if let Some(db) = std::mem::take(&mut self.db) {
+            let path = db.path().to_path_buf();
+            let path_str = path.to_string_lossy().to_string();
+            let opts = Options::default();
 
-        tracing::info!("Destroying db: {path_str}");
-        self.db.cancel_all_background_work(true);
-        drop(self);
-        let res = DB::destroy(&opts, path);
-        tracing::info!("Destroying db: {path_str}. DONE: {res:?}");
+            tracing::info!("Destroying db: {path_str}");
+            db.cancel_all_background_work(true);
+            drop(db);
+            self.db = None;
+            let res = DB::destroy(&opts, path);
+            tracing::info!("Destroying db: {path_str}. DONE: {res:?}");
+        }
     }
 }
 
@@ -113,11 +130,5 @@ impl AdblockDB {
             whitelist,
             rewrites,
         })
-    }
-
-    pub fn destroy(self) {
-        self.blacklist.destroy();
-        self.whitelist.destroy();
-        self.rewrites.destroy();
     }
 }

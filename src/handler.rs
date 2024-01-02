@@ -1,4 +1,7 @@
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::{
+    net::{Ipv4Addr, Ipv6Addr},
+    sync::Arc,
+};
 
 use hickory_resolver::{
     error::ResolveErrorKind,
@@ -67,12 +70,12 @@ impl From<crate::engine::EngineError> for HandlerError {
 /// DNS Request Handler
 #[derive(Debug)]
 pub struct Handler {
-    engine: AdblockEngine,
+    engine: Arc<AdblockEngine>,
     resolver: Resolver,
 }
 
 impl Handler {
-    pub fn new(engine: AdblockEngine, resolver: Resolver) -> Self {
+    pub fn new(engine: Arc<AdblockEngine>, resolver: Resolver) -> Self {
         Self { engine, resolver }
     }
 }
