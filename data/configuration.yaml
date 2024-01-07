@@ -1,0 +1,57 @@
+blacklist:
+  - format: hosts
+    path: ./blacklist.d/ads_custom.hosts
+  - format: hosts
+    path: ./blacklist.d/porn_custom.hosts
+  - format: hosts
+    path: ./blacklist.d/porn_reddit.hosts
+  - format: hosts
+    path: ./blacklist.d/__extra_blacklist.hosts
+  - format: domains
+    path: ./blacklist.d/misc_blacklist.txt
+  - format: domains
+    path: ./blacklist.d/nextdns_cname_cloaking.txt
+
+whitelist:
+  - format: hosts
+    path: ./whitelist.d/__extra_whitelist.hosts
+  - format: domains
+    path: ./whitelist.d/blogspot_whitelist.txt
+  - format: domains
+    path: ./whitelist.d/facebook_whitelist.txt
+  - format: domains
+    path: ./whitelist.d/fbcdn_whitelist.txt
+  - format: domains
+    path: ./whitelist.d/google_whitelist.txt
+  - format: domains
+    path: ./whitelist.d/microsoft_nsatc_net.txt
+  - format: domains
+    path: ./whitelist.d/microsoft_whitelist.txt
+  - format: domains
+    path: ./whitelist.d/misc_whitelist.txt
+  - format: domains
+    path: ./whitelist.d/pihole_common_whitelist.txt
+  - format: domains
+    path: ./whitelist.d/regex_whitelist.txt
+  - format: domains
+    path: ./whitelist.d/statuspage_whitelist.txt
+  - format: domains
+    path: ./whitelist.d/windows_update_nsatc_net.txt
+  - format: zone
+    path: ./overrides.d/bing-safesearch.zone
+  - format: zone
+    path: ./overrides.d/duckduckgo-safesearch.zone
+  - format: zone
+    path: ./overrides.d/google-safesearch.zone
+  - format: zone
+    path: ./overrides.d/ignore-whitelist.zone
+
+overrides:
+  - format: cname
+    path: ./overrides.d/bing-safesearch.zone
+  - format: cname
+    path: ./overrides.d/duckduckgo-safesearch.zone
+  - format: cname
+    path: ./overrides.d/google-safesearch.zone
+  - format: cname
+    path: ./overrides.d/ignore-whitelist.zone
