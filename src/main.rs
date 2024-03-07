@@ -47,7 +47,7 @@ struct Args {
     config_url: FileOrUrl,
 
     /// Sets a custom listener port
-    #[arg(short, long, value_name = "PORT", default_value = "53")]
+    #[arg(short, long, env, value_name = "PORT", default_value = "53")]
     port: u16,
 
     /// Sets a custom forward resolvers
