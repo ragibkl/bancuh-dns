@@ -11,13 +11,16 @@ use hickory_resolver::{
 };
 use itertools::Itertools;
 
-pub fn create_resolver(forwarders: &[IpAddr]) -> TokioAsyncResolver {
-    tracing::info!("Setting up forwarders: {}", forwarders.iter().join(", "));
+pub fn create_resolver(forwarders: &[IpAddr], port: &u16) -> TokioAsyncResolver {
+    tracing::info!(
+        "Setting up forwarders: {} on port: {port}",
+        forwarders.iter().join(", ")
+    );
 
     let mut config = ResolverConfig::new();
     forwarders.iter().for_each(|f| {
-        tracing::info!("Setting up forwarder: {f}");
-        let addr = SocketAddr::new(*f, 53);
+        let addr = SocketAddr::new(*f, *port);
+        tracing::info!("Setting up forwarder: {addr}");
         let name_server = NameServerConfig::new(addr, Protocol::Udp);
         config.add_name_server(name_server);
     });
@@ -33,8 +36,8 @@ pub struct Resolver {
 }
 
 impl Resolver {
-    pub fn new(forwarders: &[IpAddr]) -> Self {
-        let resolver = create_resolver(forwarders);
+    pub fn new(forwarders: &[IpAddr], port: &u16) -> Self {
+        let resolver = create_resolver(forwarders, port);
         Self { resolver }
     }
 

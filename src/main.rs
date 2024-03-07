@@ -60,6 +60,10 @@ struct Args {
         default_value = "8.8.8.8,8.8.4.4"
     )]
     forwarders: Vec<IpAddr>,
+
+    /// Sets a custom forward resolvers port, useful for local custom port
+    #[arg(long, env, value_name = "FORWARDERS_PORT", default_value = "53")]
+    forwarders_port: u16,
 }
 
 async fn sigint() -> std::io::Result<()> {
@@ -80,11 +84,13 @@ async fn main() -> anyhow::Result<()> {
         config_url,
         port,
         forwarders,
+        forwarders_port,
     } = Args::parse();
 
     tracing::info!("config_url: {config_url}");
     tracing::info!("port: {port}");
     tracing::info!("forwarders: [{}]", forwarders.iter().join(", "));
+    tracing::info!("forwarders_port: {forwarders_port}");
 
     tracing::info!("Validating adblock config. config_url: {config_url}");
     Config::load(&config_url).await?;
@@ -124,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracker.close();
 
-    let resolver = Resolver::new(&forwarders);
+    let resolver = Resolver::new(&forwarders, &forwarders_port);
     let handler = Handler::new(engine, resolver);
 
     tracing::info!("Starting dns server");
