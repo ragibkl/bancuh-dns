@@ -13,7 +13,7 @@ use itertools::Itertools;
 
 pub fn create_resolver(forwarders: &[IpAddr], port: &u16) -> TokioAsyncResolver {
     tracing::info!(
-        "Setting up forwarders: {} on port: {port}",
+        "Setting up forwarders: [{}] on port: {port}",
         forwarders.iter().join(", ")
     );
 
