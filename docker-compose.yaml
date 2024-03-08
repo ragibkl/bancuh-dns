@@ -1,13 +1,6 @@
 version: "3"
 
 services:
-  bind:
-    image: ragibkl/bancuh-bind
-    restart: always
-    ports:
-      - 1154:53/tcp
-      - 1154:53/udp
-
   dns:
     image: ragibkl/bancuh-dns
     build:
@@ -15,8 +8,9 @@ services:
     restart: always
     environment:
       CONFIG_URL: /data/configuration.yaml
-      FORWARDERS: "127.0.0.1"
-      FORWARDERS_PORT: "1154"
+      PORT: 53
+      # FORWARDERS: "1.1.1.1,1.0.0.1"
+      # FORWARDERS_PORT: "53"
     volumes:
       - ./data:/data
     ports:

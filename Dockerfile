@@ -25,10 +25,13 @@ RUN cargo build --release
 FROM debian:12 AS runtime
 
 RUN apt-get update
-RUN apt-get install -y openssl libc6 libstdc++6
+RUN apt-get install -y openssl libc6 libstdc++6 bind9
 
 # set default logging, can be overridden
 ENV RUST_LOG=info
+
+# copy bind config
+COPY named.conf.options /etc/bind/named.conf.options
 
 # copy binary
 COPY --from=builder /code/bancuh-dns/target/release/bancuh-dns /usr/local/bin/bancuh-dns

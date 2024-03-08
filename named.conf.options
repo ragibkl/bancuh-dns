@@ -1,0 +1,13 @@
+options {
+	listen-on port 5353 { any; };
+	listen-on-v6 port 5353 { any; };
+
+	allow-query { any; };
+	allow-recursion { any; };
+	allow-transfer { none; };
+
+	prefetch 10;
+	max-cache-size 256m;
+	max-cache-ttl 600;
+	max-ncache-ttl 600;
+};
