@@ -1,3 +1,4 @@
+mod bind;
 mod compiler;
 mod config;
 mod db;
@@ -7,7 +8,7 @@ mod handler;
 mod resolver;
 
 use std::{
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::Duration,
 };
@@ -22,6 +23,7 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
+    bind::spawn_bind,
     config::{Config, FileOrUrl},
     engine::AdblockEngine,
     handler::Handler,
@@ -30,6 +32,8 @@ use crate::{
 
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 const UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
+const BIND_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+const BIND_PORT: u16 = 5353;
 
 #[derive(Parser, Debug)]
 #[command(name = "Bancuh DNS")]
@@ -50,15 +54,8 @@ struct Args {
     #[arg(short, long, env, value_name = "PORT", default_value = "53")]
     port: u16,
 
-    /// Sets a custom forward resolvers
-    #[arg(
-        short,
-        long,
-        env,
-        value_name = "FORWARDERS",
-        value_delimiter = ',',
-        default_value = "8.8.8.8,8.8.4.4"
-    )]
+    /// Sets custom forward resolvers
+    #[arg(short, long, env, value_name = "FORWARDERS", value_delimiter = ',')]
     forwarders: Vec<IpAddr>,
 
     /// Sets a custom forward resolvers port, useful for local custom port
@@ -93,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("forwarders_port: {forwarders_port}");
 
     tracing::info!("Validating adblock config. config_url: {config_url}");
-    Config::load(&config_url).await?;
+    let _ = Config::load(&config_url).await?;
     tracing::info!("Validating adblock config. config_url: {config_url}. DONE");
 
     let engine = Arc::new(AdblockEngine::new(config_url)?);
@@ -128,9 +125,39 @@ async fn main() -> anyhow::Result<()> {
     });
     tracing::info!("Starting engine-update task. DONE");
 
+    let resolver = if forwarders.is_empty() {
+        tracing::info!("Starting bind");
+        let cloned_token = token.clone();
+        tracker.spawn(async move {
+            let mut child = match spawn_bind() {
+                Ok(child) => child,
+                Err(err) => {
+                    tracing::error!("Starting bind. ERROR: {err}");
+                    cloned_token.cancel();
+                    return;
+                }
+            };
+            tracing::info!("Starting bind. DONE");
+
+            tokio::select! {
+                _ = cloned_token.cancelled() => {
+                    tracing::info!("bind received cancel signal");
+                    let _ = child.kill().await;
+                },
+                _ = child.wait() => {
+                    tracing::info!("bind ended prematurely");
+                    cloned_token.cancel();
+                },
+            }
+        });
+
+        Resolver::new(&[BIND_IP], &BIND_PORT)
+    } else {
+        Resolver::new(&forwarders, &forwarders_port)
+    };
+
     tracker.close();
 
-    let resolver = Resolver::new(&forwarders, &forwarders_port);
     let handler = Handler::new(engine, resolver);
 
     tracing::info!("Starting dns server");
