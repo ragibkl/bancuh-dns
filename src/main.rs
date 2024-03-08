@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("forwarders_port: {forwarders_port}");
 
     tracing::info!("Validating adblock config. config_url: {config_url}");
-    let _ = Config::load(&config_url).await?;
+    Config::load(&config_url).await?;
     tracing::info!("Validating adblock config. config_url: {config_url}. DONE");
 
     let engine = Arc::new(AdblockEngine::new(config_url)?);
