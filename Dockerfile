@@ -32,7 +32,7 @@ RUN cargo build --release
 FROM alpine:3.19 AS runtime
 
 # install runtime dependencies
-RUN apk add openssl bind clang-libs
+RUN apk add openssl bind libgcc libstdc++
 
 # set default logging, can be overridden
 ENV RUST_LOG=info
