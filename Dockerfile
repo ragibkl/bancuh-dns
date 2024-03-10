@@ -1,11 +1,18 @@
 ## builder
-FROM rust:1.76-bookworm AS builder
+FROM alpine:3.19 AS builder
 
 WORKDIR /code/bancuh-dns
 
 # install system dependencies
-RUN apt-get update
-RUN apt-get install -y clang
+RUN apk add build-base \
+    cargo \
+    clang \
+    clang-dev \
+    clang-libs \
+    cmake \
+    linux-headers \
+    openssl-dev \
+    rust
 
 # setup build dependencies
 RUN cargo init .
@@ -22,17 +29,16 @@ RUN cargo build --release
 
 
 ## runtime
-FROM debian:bookworm AS runtime
+FROM alpine:3.19 AS runtime
 
 # install runtime dependencies
-RUN apt-get update
-RUN apt-get install -y openssl libc6 libstdc++6 bind9
+RUN apk add openssl bind clang-libs
 
 # set default logging, can be overridden
 ENV RUST_LOG=info
 
 # copy bind config
-COPY named.conf.options /etc/bind/named.conf.options
+COPY named.conf /etc/bind/named.conf
 
 # copy binary
 COPY --from=builder /code/bancuh-dns/target/release/bancuh-dns /usr/local/bin/bancuh-dns
