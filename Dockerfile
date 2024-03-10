@@ -24,6 +24,7 @@ RUN cargo build --release
 ## runtime
 FROM debian:bookworm AS runtime
 
+# install runtime dependencies
 RUN apt-get update
 RUN apt-get install -y openssl libc6 libstdc++6 bind9
 
