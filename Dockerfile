@@ -9,9 +9,7 @@ RUN apk add build-base \
     clang \
     clang-dev \
     clang-libs \
-    cmake \
     linux-headers \
-    openssl-dev \
     rust
 
 # setup build dependencies
