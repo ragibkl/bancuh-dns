@@ -1,5 +1,5 @@
 ## builder
-FROM rust:1.74-bookworm AS builder
+FROM rust:1.76-bookworm AS builder
 
 WORKDIR /code/bancuh-dns
 
@@ -22,7 +22,7 @@ RUN cargo build --release
 
 
 ## runtime
-FROM debian:12 AS runtime
+FROM debian:bookworm AS runtime
 
 RUN apt-get update
 RUN apt-get install -y openssl libc6 libstdc++6 bind9
