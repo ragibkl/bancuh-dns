@@ -31,7 +31,6 @@ use crate::{
 };
 
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
-const UPDATE_INTERVAL: Duration = Duration::from_secs(86400); // 1 day
 const BIND_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 const BIND_PORT: u16 = 5353;
 
@@ -61,6 +60,10 @@ struct Args {
     /// Sets a custom forward resolvers port, useful for local custom port
     #[arg(long, env, value_name = "FORWARDERS_PORT", default_value = "53")]
     forwarders_port: u16,
+
+    /// Sets the blocklist update interval in seconds
+    #[arg(long, env, value_name = "UPDATE_INTERVAL", default_value = "86400")]
+    update_interval: u64,
 }
 
 async fn sigint() -> std::io::Result<()> {
@@ -82,15 +85,35 @@ async fn main() -> anyhow::Result<()> {
         port,
         forwarders,
         forwarders_port,
+        update_interval,
     } = Args::parse();
+
+    let update_interval = Duration::from_secs(update_interval);
 
     tracing::info!("config_url: {config_url}");
     tracing::info!("port: {port}");
     tracing::info!("forwarders: [{}]", forwarders.iter().join(", "));
     tracing::info!("forwarders_port: {forwarders_port}");
+    tracing::info!("update_interval: {update_interval:?}");
 
     tracing::info!("Validating adblock config. config_url: {config_url}");
-    Config::load(&config_url).await?;
+    let mut delay = Duration::from_secs(5);
+    for attempt in 1u32.. {
+        match Config::load(&config_url).await {
+            Ok(_) => break,
+            Err(err) if attempt >= 5 => {
+                tracing::error!("Validating adblock config failed after {attempt} attempts: {err}");
+                return Err(err.into());
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "Validating adblock config failed (attempt {attempt}): {err}. Retrying in {delay:?}"
+                );
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(Duration::from_secs(60));
+            }
+        }
+    }
     tracing::info!("Validating adblock config. config_url: {config_url}. DONE");
 
     let engine = Arc::new(AdblockEngine::new(config_url)?);
@@ -105,15 +128,16 @@ async fn main() -> anyhow::Result<()> {
         loop {
             tracing::info!("engine-update running db update");
             if let Err(err) = cloned_engine.run_update().await {
-                tracing::info!("engine-update running db update. ERROR: {err}");
-                cloned_token.cancel();
-                return;
+                tracing::warn!(
+                    "engine-update running db update. ERROR: {err}. Keeping existing db, will retry next interval."
+                );
+            } else {
+                tracing::info!("engine-update running db update. DONE");
             }
-            tracing::info!("engine-update running db update. DONE");
 
-            tracing::info!("engine-update sleeping for 1 day");
+            tracing::info!("engine-update sleeping for {update_interval:?}");
             tokio::select! {
-                _ = tokio::time::sleep(UPDATE_INTERVAL) => {
+                _ = tokio::time::sleep(update_interval) => {
                     tracing::info!("engine-update waking up");
                 }
                 _ = cloned_token.cancelled() => {

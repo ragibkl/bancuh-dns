@@ -1,5 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use thiserror::Error;
 
 use crate::{
@@ -32,33 +33,32 @@ pub enum EngineError {
 
 #[derive(Debug)]
 pub struct AdblockEngine {
-    db: Arc<Mutex<AdblockDB>>,
+    db: Arc<ArcSwap<AdblockDB>>,
     config_url: FileOrUrl,
 }
 
 impl AdblockEngine {
     pub fn new(config_url: FileOrUrl) -> Result<Self, EngineError> {
-        let db = Arc::new(Mutex::new(AdblockDB::create()?));
+        let db = Arc::new(ArcSwap::from_pointee(AdblockDB::create()?));
 
         Ok(Self { db, config_url })
     }
 
     pub async fn run_update(&self) -> Result<(), EngineError> {
-        let db = self.db.clone();
         let config_url = self.config_url.clone();
 
         // instantiate a new_db and load adblock definition into it
         let new_db = AdblockDB::create()?;
         load_definition(&new_db, &config_url).await?;
 
-        // swap the new_db in-place of the existing old_db and destroy old_db
-        *db.lock().expect("Could not lock db") = new_db;
+        // atomically swap the new_db in place; old_db is dropped here
+        self.db.store(Arc::new(new_db));
 
         Ok(())
     }
 
     pub async fn get_redirect(&self, name: &str) -> Result<Option<String>, EngineError> {
-        let db_guard = self.db.lock().expect("Could not lock db");
+        let db_guard = self.db.load();
         let alias = db_guard.rewrites.get(name)?;
 
         if let Some(alias) = alias.as_deref() {
@@ -69,7 +69,7 @@ impl AdblockEngine {
     }
 
     pub async fn is_blocked(&self, name: &str) -> Result<bool, EngineError> {
-        let db_guard = self.db.lock().expect("Could not lock db");
+        let db_guard = self.db.load();
 
         if db_guard.whitelist.contains(name)? {
             tracing::info!("whitelist: {name}");
