@@ -41,5 +41,9 @@ COPY named.conf /etc/bind/named.conf
 # copy binary
 COPY --from=builder /code/bancuh-dns/target/release/bancuh-dns /usr/local/bin/bancuh-dns
 
+# healthcheck - runs inside the container against the internal port
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD dig @127.0.0.1 google.com || exit 1
+
 # set entrypoint
 ENTRYPOINT ["/usr/local/bin/bancuh-dns"]
