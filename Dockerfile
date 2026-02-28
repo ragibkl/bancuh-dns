@@ -1,5 +1,5 @@
 ## builder
-FROM alpine:3.19 AS builder
+FROM alpine:3.23 AS builder
 
 WORKDIR /code/bancuh-dns
 
@@ -27,7 +27,7 @@ RUN cargo build --release
 
 
 ## runtime
-FROM alpine:3.19 AS runtime
+FROM alpine:3.23 AS runtime
 
 # install runtime dependencies
 RUN apk add openssl bind libgcc libstdc++
