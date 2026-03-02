@@ -4,7 +4,6 @@ use std::{
 };
 
 use hickory_resolver::{
-    error::ResolveErrorKind,
     proto::rr::{
         rdata::{A, AAAA, CNAME},
         RData, Record,
@@ -46,17 +45,18 @@ impl From<std::io::Error> for HandlerError {
     }
 }
 
-impl From<hickory_resolver::error::ResolveError> for HandlerError {
-    fn from(err: hickory_resolver::error::ResolveError) -> Self {
-        match err.kind() {
-            ResolveErrorKind::NoRecordsFound { query, .. } => Self::nx_domain(query.name()),
-            _ => Self::serv_fail(err),
+impl From<hickory_resolver::ResolveError> for HandlerError {
+    fn from(err: hickory_resolver::ResolveError) -> Self {
+        if err.is_nx_domain() || err.is_no_records_found() {
+            Self::nx_domain(err.to_string())
+        } else {
+            Self::serv_fail(err)
         }
     }
 }
 
-impl From<hickory_resolver::proto::error::ProtoError> for HandlerError {
-    fn from(err: hickory_resolver::proto::error::ProtoError) -> Self {
+impl From<hickory_resolver::proto::ProtoError> for HandlerError {
+    fn from(err: hickory_resolver::proto::ProtoError) -> Self {
         Self::serv_fail(err)
     }
 }
@@ -96,7 +96,8 @@ impl Handler {
             return Err(HandlerError::refused("Unsupported MessageType"));
         }
 
-        let name = request.query().name();
+        let request_info = request.request_info().map_err(HandlerError::serv_fail)?;
+        let name = request_info.query.name();
 
         // check engine for domain override redirection
         if let Some(alias) = self.engine.get_redirect(&name.to_string()).await? {
@@ -105,13 +106,13 @@ impl Handler {
             // include a cname record in the response
             let cname = Name::from_utf8(&alias)?;
             let rdata = RData::CNAME(CNAME(cname));
-            let record = Record::from_rdata(request.query().name().into(), 60, rdata);
+            let record = Record::from_rdata(request_info.query.name().into(), 60, rdata);
             records.push(record);
 
             // fetch records from forward resolver using the alias and return them
             let alias_records = self
                 .resolver
-                .lookup(&alias, request.query().query_type())
+                .lookup(&alias, request_info.query.query_type())
                 .await?;
             records.extend(alias_records);
 
@@ -120,11 +121,11 @@ impl Handler {
 
         // check engine if domain is blocked
         if self.engine.is_blocked(&name.to_string()).await? {
-            match request.query().query_type() {
+            match request_info.query.query_type() {
                 hickory_resolver::proto::rr::RecordType::A => {
                     let ipv4_null_addr = Ipv4Addr::new(0, 0, 0, 0);
                     let rdata = RData::A(A(ipv4_null_addr));
-                    let record = Record::from_rdata(request.query().name().into(), 60, rdata);
+                    let record = Record::from_rdata(request_info.query.name().into(), 60, rdata);
                     let records = vec![record];
 
                     return self.send_response(request, responder, &records).await;
@@ -132,7 +133,7 @@ impl Handler {
                 hickory_resolver::proto::rr::RecordType::AAAA => {
                     let ipv6_null_addr = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0);
                     let rdata = RData::AAAA(AAAA(ipv6_null_addr));
-                    let record = Record::from_rdata(request.query().name().into(), 60, rdata);
+                    let record = Record::from_rdata(request_info.query.name().into(), 60, rdata);
                     let records = vec![record];
 
                     return self.send_response(request, responder, &records).await;
@@ -144,7 +145,7 @@ impl Handler {
         // fetch records from forward resolver and return them
         let records = self
             .resolver
-            .lookup(&name.to_string(), request.query().query_type())
+            .lookup(&name.to_string(), request_info.query.query_type())
             .await?;
         self.send_response(request, responder, &records).await
     }
