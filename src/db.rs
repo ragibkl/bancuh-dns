@@ -1,14 +1,14 @@
 use std::{path::PathBuf, string::FromUtf8Error};
 
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use rand::{distr::Alphanumeric, Rng};
 use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
 use thiserror::Error;
 
 pub type DB = DBWithThreadMode<MultiThreaded>;
 
 fn rand_string() -> String {
-    thread_rng()
-        .sample_iter(&Alphanumeric)
+    rand::rng()
+        .sample_iter(Alphanumeric)
         .take(10)
         .map(char::from)
         .collect()

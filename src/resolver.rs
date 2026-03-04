@@ -1,17 +1,17 @@
 use std::net::{IpAddr, SocketAddr};
 
 use hickory_resolver::{
-    config::{NameServerConfig, Protocol, ResolverConfig, ResolverOpts},
-    error::{ResolveError, ResolveErrorKind},
+    config::{NameServerConfig, ResolverConfig, ResolverOpts},
+    name_server::TokioConnectionProvider,
     proto::{
-        op::ResponseCode,
         rr::{Record, RecordType},
+        xfer::Protocol,
     },
-    TokioAsyncResolver,
+    ResolveError, Resolver as HickoryResolver,
 };
 use itertools::Itertools;
 
-pub fn create_resolver(forwarders: &[IpAddr], port: &u16) -> TokioAsyncResolver {
+pub fn create_resolver(forwarders: &[IpAddr], port: &u16) -> HickoryResolver<TokioConnectionProvider> {
     tracing::info!(
         "Setting up forwarders: [{}] on port: {port}",
         forwarders.iter().join(", ")
@@ -27,12 +27,14 @@ pub fn create_resolver(forwarders: &[IpAddr], port: &u16) -> TokioAsyncResolver 
 
     let options = ResolverOpts::default();
 
-    TokioAsyncResolver::tokio(config, options)
+    HickoryResolver::builder_with_config(config, TokioConnectionProvider::default())
+        .with_options(options)
+        .build()
 }
 
 #[derive(Debug)]
 pub struct Resolver {
-    resolver: TokioAsyncResolver,
+    resolver: HickoryResolver<TokioConnectionProvider>,
 }
 
 impl Resolver {
@@ -50,13 +52,8 @@ impl Resolver {
     ) -> Result<Vec<Record>, ResolveError> {
         match self.resolver.lookup(name, query_type).await {
             Ok(lookup) => Ok(lookup.records().to_owned()),
-            Err(err) => match err.kind() {
-                ResolveErrorKind::NoRecordsFound {
-                    response_code: ResponseCode::NoError,
-                    ..
-                } => Ok(Vec::new()),
-                _ => Err(err),
-            },
+            Err(err) if err.is_no_records_found() && !err.is_nx_domain() => Ok(Vec::new()),
+            Err(err) => Err(err),
         }
     }
 }

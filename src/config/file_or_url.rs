@@ -32,11 +32,7 @@ impl FromStr for FileOrUrl {
             return Ok(Self::Url(url));
         }
 
-        if let Ok(path_buf) = PathBuf::from_str(s) {
-            return Ok(Self::File(path_buf));
-        }
-
-        Err(ParseFileOrUrlError)
+        Ok(Self::File(PathBuf::from(s)))
     }
 }
 

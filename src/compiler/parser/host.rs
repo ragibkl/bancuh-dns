@@ -17,20 +17,14 @@ pub fn parse_host(value: &str) -> Option<Host> {
         .expect("Invalid regex");
     }
 
-    let captures = match RE.captures(value) {
-        Some(c) => c,
-        None => return None,
-    };
+    let captures = RE.captures(value)?;
 
     match (captures.name("ip"), captures.name("domain")) {
         (Some(ip), Some(domain)) => {
             let ip = ip.as_str().trim().to_string();
             let domain = domain.as_str().trim().to_string();
 
-            let domain = match Domain::parse(&domain) {
-                Some(domain) => domain,
-                None => return None,
-            };
+            let domain = Domain::parse(&domain)?;
 
             Some(Host { ip, domain })
         }
