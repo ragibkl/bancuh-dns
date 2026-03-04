@@ -37,8 +37,8 @@ jobs:
             type=ref,event=branch
             type=ref,event=tag
             type=ref,event=pr
-            # set latest tag for master branch
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
+            # set 2 tag for master branch
+            type=raw,value=2,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
 
       - uses: depot/setup-action@v1
 
