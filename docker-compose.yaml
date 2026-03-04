@@ -9,8 +9,24 @@ services:
       PORT: 53
       # FORWARDERS: "1.1.1.1,1.0.0.1"
       # FORWARDERS_PORT: "53"
+      # --- TLS testing with Pebble (uncomment to test) ---
+      # TLS_ENABLED: "true"
+      # TLS_DOMAIN: "dns"
+      # TLS_EMAIL: "test@example.com"
+      # ACME_URL: "https://pebble:14000/dir"
+      # ACME_INSECURE: "true"
     volumes:
       - ./data:/data
     ports:
-      - 1153:53/tcp
-      - 1153:53/udp
+      - 1153:1153/tcp
+      - 1153:1153/udp
+
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:2.8.0
+    command: ["-config", "/pebble-config.json"]
+    volumes:
+      - ./pebble-config.json:/pebble-config.json:ro
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+    ports:
+      - 14000:14000
