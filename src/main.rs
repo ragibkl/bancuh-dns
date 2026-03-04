@@ -6,6 +6,7 @@ mod engine;
 mod fetch;
 mod handler;
 mod resolver;
+mod tls;
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -28,6 +29,7 @@ use crate::{
     engine::AdblockEngine,
     handler::Handler,
     resolver::Resolver,
+    tls::setup_tls,
 };
 
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -64,6 +66,30 @@ struct Args {
     /// Sets the blocklist update interval in seconds
     #[arg(long, env, value_name = "UPDATE_INTERVAL", default_value = "86400")]
     update_interval: u64,
+
+    /// Enable DoT (port 853) and DoH (port 443) via ACME/Let's Encrypt
+    #[arg(long, env, value_name = "TLS_ENABLED")]
+    tls_enabled: bool,
+
+    /// Email address for ACME/Let's Encrypt registration (required when TLS_ENABLED=true)
+    #[arg(long, env, value_name = "TLS_EMAIL")]
+    tls_email: Option<String>,
+
+    /// Domain name for the TLS certificate (required when TLS_ENABLED=true)
+    #[arg(long, env, value_name = "TLS_DOMAIN")]
+    tls_domain: Option<String>,
+
+    /// Custom ACME directory URL (defaults to Let's Encrypt production)
+    #[arg(long, env, value_name = "ACME_URL")]
+    acme_url: Option<String>,
+
+    /// Directory for caching ACME account key and certificates
+    #[arg(long, env, value_name = "ACME_CACHE_DIR", default_value = "/var/cache/bancuh-dns/certs")]
+    acme_cache_dir: String,
+
+    /// Disable TLS certificate verification for the ACME server (for testing with Pebble)
+    #[arg(long, env, value_name = "ACME_INSECURE")]
+    acme_insecure: bool,
 }
 
 async fn sigint() -> std::io::Result<()> {
@@ -86,6 +112,12 @@ async fn main() -> anyhow::Result<()> {
         forwarders,
         forwarders_port,
         update_interval,
+        tls_enabled,
+        tls_email,
+        tls_domain,
+        acme_url,
+        acme_cache_dir,
+        acme_insecure,
     } = Args::parse();
 
     let update_interval = Duration::from_secs(update_interval);
@@ -189,6 +221,34 @@ async fn main() -> anyhow::Result<()> {
     let socket_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
     server.register_listener(TcpListener::bind(&socket_addr).await?, TCP_TIMEOUT);
     server.register_socket(UdpSocket::bind(socket_addr).await?);
+
+    if tls_enabled {
+        let domain = tls_domain.expect("TLS_DOMAIN is required when TLS_ENABLED=true");
+        let email = tls_email.expect("TLS_EMAIL is required when TLS_ENABLED=true");
+
+        tracing::info!("Setting up TLS/ACME for domain: {domain}");
+        let resolver = setup_tls(domain.clone(), email, acme_url, acme_cache_dir, acme_insecure, &tracker, token.clone()).await;
+
+        tracing::info!("Registering DoT listener on port 853");
+        let dot_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 853));
+        server.register_tls_listener(
+            TcpListener::bind(&dot_addr).await?,
+            TCP_TIMEOUT,
+            resolver.clone(),
+        )?;
+
+        tracing::info!("Registering DoH listener on port 443");
+        let doh_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 443));
+        server.register_https_listener(
+            TcpListener::bind(&doh_addr).await?,
+            TCP_TIMEOUT,
+            resolver,
+            Some(domain),
+            "/dns-query".to_string(),
+        )?;
+        tracing::info!("TLS/ACME setup done");
+    }
+
     tracing::info!("Starting dns server. DONE");
 
     tokio::select! {
