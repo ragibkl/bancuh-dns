@@ -14,7 +14,6 @@ use self::{raw_config::RawConfig, source::FromRawSourceError};
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub config_url: FileOrUrl,
     pub blacklist: Vec<BlacklistSource>,
     pub whitelist: Vec<WhitelistSource>,
     pub overrides: Vec<OverridesSource>,
@@ -58,7 +57,6 @@ impl Config {
         }
 
         Ok(Self {
-            config_url: config_url.clone(),
             blacklist,
             whitelist,
             overrides,

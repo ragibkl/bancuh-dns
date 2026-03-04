@@ -17,10 +17,7 @@ fn parse_cname(input: &str) -> Option<CName> {
         .expect("Invalid regex");
     }
 
-    let captures = match RE.captures(input) {
-        Some(c) => c,
-        None => return None,
-    };
+    let captures = RE.captures(input)?;
 
     match (captures.name("domain"), captures.name("alias")) {
         (Some(domain), Some(alias)) => {
