@@ -27,7 +27,7 @@ Key strengths:
                         │                  bancuh-dns                      │
                         │                                                  │
  DNS/UDP (port 53)  ───▶│  Handler                                         │
- DNS/TCP (port 53)  ───▶│    0. rate limit ──▶ REFUSED if exceeded         │
+ DNS/TCP (port 53)  ───▶│    0. rate limit ──▶ silently dropped         │
  DoT     (port 853) ───▶│    1. rewrite?   ──▶ forward alias               │
  DoH     (port 443) ───▶│    2. blocked?   ──▶ return 0.0.0.0              │
                         │    3. passthrough ──▶ Resolver                   │
@@ -59,7 +59,7 @@ Key strengths:
 | `AdblockDB` | Three RocksDB stores: `blacklist`, `whitelist`, `rewrites` |
 | `Resolver` | Forwards allowed queries to upstream DNS |
 | `bind` (BIND9) | Local recursive resolver used when no `FORWARDERS` are set |
-| Rate limiter | Per-IP token bucket (`governor`) — returns REFUSED when exceeded |
+| Rate limiter | Per-IP token bucket (`governor`) — silently drops excess queries |
 | Query log | In-memory per-IP log store with 10-minute retention |
 | Admin server | HTTP UI + JSON API on port 8080 for viewing query logs |
 | Update loop | Fetches config, compiles a fresh DB, hot-swaps it with zero downtime |
@@ -67,7 +67,7 @@ Key strengths:
 
 ### Request flow
 
-1. Query arrives → **rate limit check** (per-IP token bucket) → REFUSED if exceeded
+1. Query arrives → **rate limit check** (per-IP token bucket) → silently dropped
 2. `Handler` looks up the domain in `AdblockEngine`
 3. **Rewrite match** → returns a CNAME to the alias, then resolves the alias
 4. **Blacklist match** (and not whitelisted) → returns `0.0.0.0` (A) or `::` (AAAA)
@@ -95,7 +95,9 @@ On startup and then every `UPDATE_INTERVAL` seconds (default: 86400), the update
 | `FORWARDERS_PORT` | `53` | Port for upstream forwarders |
 | `UPDATE_INTERVAL` | `86400` | Blocklist refresh interval in seconds |
 | `ADMIN_PORT` | `8080` | Port for the admin HTTP server (query logs UI) |
-| `RATE_LIMIT` | `50` | Max DNS requests per second per IP (0 = unlimited) |
+| `RATE_LIMIT` | `100` | Max DNS requests per second per IP prefix (0 = unlimited) |
+| `RATE_LIMIT_IPV4_PREFIX` | `32` | IPv4 prefix length for rate limiting (32 = per-IP, 24 = per /24 subnet) |
+| `RATE_LIMIT_IPV6_PREFIX` | `48` | IPv6 prefix length for rate limiting (48 = per /48 block, 128 = per-IP) |
 
 ### TLS / ACME (optional)
 

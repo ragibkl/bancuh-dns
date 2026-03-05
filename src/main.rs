@@ -101,8 +101,16 @@ struct Args {
     admin_port: u16,
 
     /// Maximum DNS requests per second per IP (0 = unlimited)
-    #[arg(long, env, value_name = "RATE_LIMIT", default_value = "50")]
+    #[arg(long, env, value_name = "RATE_LIMIT", default_value = "100")]
     rate_limit: u32,
+
+    /// IPv4 prefix length for rate limiting (e.g. 32 = per-IP, 24 = per /24 subnet)
+    #[arg(long, env, value_name = "RATE_LIMIT_IPV4_PREFIX", default_value = "32")]
+    rate_limit_ipv4_prefix: u8,
+
+    /// IPv6 prefix length for rate limiting (e.g. 48 = per /48 block, 128 = per-IP)
+    #[arg(long, env, value_name = "RATE_LIMIT_IPV6_PREFIX", default_value = "48")]
+    rate_limit_ipv6_prefix: u8,
 }
 
 async fn sigint() -> std::io::Result<()> {
@@ -133,6 +141,8 @@ async fn main() -> anyhow::Result<()> {
         acme_insecure,
         admin_port,
         rate_limit,
+        rate_limit_ipv4_prefix,
+        rate_limit_ipv6_prefix,
     } = Args::parse();
 
     let update_interval = Duration::from_secs(update_interval);
@@ -229,7 +239,14 @@ async fn main() -> anyhow::Result<()> {
 
     let query_log = Arc::new(QueryLogStore::new());
     let rate_limiter = new_rate_limiter(rate_limit).map(Arc::new);
-    let handler = Handler::new(engine, resolver, query_log.clone(), rate_limiter);
+    let handler = Handler::new(
+        engine,
+        resolver,
+        query_log.clone(),
+        rate_limiter,
+        rate_limit_ipv4_prefix,
+        rate_limit_ipv6_prefix,
+    );
 
     tracing::info!("Starting admin HTTP server on port {admin_port}");
     let cloned_query_log = query_log.clone();

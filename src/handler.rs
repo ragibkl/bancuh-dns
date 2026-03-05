@@ -21,7 +21,7 @@ use hickory_server::{
 use crate::{
     engine::AdblockEngine,
     query_log::{QueryLog, QueryLogStore},
-    rate_limiter::RateLimiter,
+    rate_limiter::{mask_ip, RateLimiter},
     resolver::Resolver,
 };
 
@@ -80,6 +80,8 @@ pub struct Handler {
     resolver: Resolver,
     query_log: Arc<QueryLogStore>,
     rate_limiter: Option<Arc<RateLimiter>>,
+    rate_limit_ipv4_prefix: u8,
+    rate_limit_ipv6_prefix: u8,
 }
 
 impl Handler {
@@ -88,12 +90,16 @@ impl Handler {
         resolver: Resolver,
         query_log: Arc<QueryLogStore>,
         rate_limiter: Option<Arc<RateLimiter>>,
+        rate_limit_ipv4_prefix: u8,
+        rate_limit_ipv6_prefix: u8,
     ) -> Self {
         Self {
             engine,
             resolver,
             query_log,
             rate_limiter,
+            rate_limit_ipv4_prefix,
+            rate_limit_ipv6_prefix,
         }
     }
 }
@@ -217,22 +223,13 @@ impl RequestHandler for Handler {
     ) -> ResponseInfo {
         let src_ip = normalize_ip(request.src());
 
-        // Rate limiting check
-        if self.rate_limiter.as_ref().is_some_and(|rl| rl.check_key(&src_ip).is_err()) {
-            tracing::warn!("rate limited: {src_ip}");
-
-            let header = Header::response_from_request(request.header());
-            let response = MessageResponseBuilder::from_message_request(request)
-                .error_msg(&header, ResponseCode::Refused);
-
-            return match responder.send_response(response).await {
-                Ok(info) => info,
-                Err(_) => {
-                    let mut header = Header::new();
-                    header.set_response_code(ResponseCode::Refused);
-                    header.into()
-                }
-            };
+        // Rate limiting check — silently drop to avoid backscatter from spoofed IPs
+        let rate_key = mask_ip(src_ip, self.rate_limit_ipv4_prefix, self.rate_limit_ipv6_prefix);
+        if self.rate_limiter.as_ref().is_some_and(|rl| rl.check_key(&rate_key).is_err()) {
+            tracing::warn!("rate limited (dropped): {src_ip}");
+            let mut header = Header::new();
+            header.set_response_code(ResponseCode::Refused);
+            return header.into();
         }
 
         match self.do_handle_request(request, &mut responder).await {
