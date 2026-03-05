@@ -1,7 +1,9 @@
 use std::{
-    net::{Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::Arc,
 };
+
+use chrono::Utc;
 
 use hickory_resolver::{
     proto::rr::{
@@ -16,7 +18,12 @@ use hickory_server::{
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
 };
 
-use crate::{engine::AdblockEngine, resolver::Resolver};
+use crate::{
+    engine::AdblockEngine,
+    query_log::{QueryLog, QueryLogStore},
+    rate_limiter::RateLimiter,
+    resolver::Resolver,
+};
 
 #[derive(Debug, thiserror::Error)]
 #[error("HandlerError: {1}")]
@@ -68,24 +75,36 @@ impl From<crate::engine::EngineError> for HandlerError {
 }
 
 /// DNS Request Handler
-#[derive(Debug)]
 pub struct Handler {
     engine: Arc<AdblockEngine>,
     resolver: Resolver,
+    query_log: Arc<QueryLogStore>,
+    rate_limiter: Option<Arc<RateLimiter>>,
 }
 
 impl Handler {
-    pub fn new(engine: Arc<AdblockEngine>, resolver: Resolver) -> Self {
-        Self { engine, resolver }
+    pub fn new(
+        engine: Arc<AdblockEngine>,
+        resolver: Resolver,
+        query_log: Arc<QueryLogStore>,
+        rate_limiter: Option<Arc<RateLimiter>>,
+    ) -> Self {
+        Self {
+            engine,
+            resolver,
+            query_log,
+            rate_limiter,
+        }
     }
 }
 
 impl Handler {
+    /// Returns (ResponseInfo, question_string, answer_classification)
     async fn do_handle_request<R: ResponseHandler>(
         &self,
         request: &Request,
         responder: &mut R,
-    ) -> Result<ResponseInfo, HandlerError> {
+    ) -> Result<(ResponseInfo, String, String), HandlerError> {
         // make sure the request is a query
         if request.op_code() != OpCode::Query {
             return Err(HandlerError::refused("Unsupported OpCode"));
@@ -98,6 +117,7 @@ impl Handler {
 
         let request_info = request.request_info().map_err(HandlerError::serv_fail)?;
         let name = request_info.query.name();
+        let question = format!("{} {}", name, request_info.query.query_type());
 
         // check engine for domain override redirection
         if let Some(alias) = self.engine.get_redirect(&name.to_string()).await? {
@@ -116,7 +136,8 @@ impl Handler {
                 .await?;
             records.extend(alias_records);
 
-            return self.send_response(request, responder, &records).await;
+            let info = self.send_response(request, responder, &records).await?;
+            return Ok((info, question, format!("rewritten: {alias}")));
         }
 
         // check engine if domain is blocked
@@ -128,7 +149,8 @@ impl Handler {
                     let record = Record::from_rdata(request_info.query.name().into(), 60, rdata);
                     let records = vec![record];
 
-                    return self.send_response(request, responder, &records).await;
+                    let info = self.send_response(request, responder, &records).await?;
+                    return Ok((info, question, "blocked".to_string()));
                 }
                 hickory_resolver::proto::rr::RecordType::AAAA => {
                     let ipv6_null_addr = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0);
@@ -136,7 +158,8 @@ impl Handler {
                     let record = Record::from_rdata(request_info.query.name().into(), 60, rdata);
                     let records = vec![record];
 
-                    return self.send_response(request, responder, &records).await;
+                    let info = self.send_response(request, responder, &records).await?;
+                    return Ok((info, question, "blocked".to_string()));
                 }
                 _ => return Err(HandlerError::nx_domain(name.to_string())),
             }
@@ -147,7 +170,8 @@ impl Handler {
             .resolver
             .lookup(&name.to_string(), request_info.query.query_type())
             .await?;
-        self.send_response(request, responder, &records).await
+        let info = self.send_response(request, responder, &records).await?;
+        Ok((info, question, "forwarded".to_string()))
     }
 
     /// build header and return response
@@ -170,6 +194,20 @@ impl Handler {
     }
 }
 
+fn normalize_ip(addr: std::net::SocketAddr) -> IpAddr {
+    match addr.ip() {
+        IpAddr::V6(v6) => {
+            // Convert IPv4-mapped IPv6 (::ffff:x.x.x.x) back to IPv4
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                IpAddr::V4(v4)
+            } else {
+                IpAddr::V6(v6)
+            }
+        }
+        ip => ip,
+    }
+}
+
 #[async_trait::async_trait]
 impl RequestHandler for Handler {
     async fn handle_request<R: ResponseHandler>(
@@ -177,8 +215,38 @@ impl RequestHandler for Handler {
         request: &Request,
         mut responder: R,
     ) -> ResponseInfo {
+        let src_ip = normalize_ip(request.src());
+
+        // Rate limiting check
+        if self.rate_limiter.as_ref().is_some_and(|rl| rl.check_key(&src_ip).is_err()) {
+            tracing::warn!("rate limited: {src_ip}");
+
+            let header = Header::response_from_request(request.header());
+            let response = MessageResponseBuilder::from_message_request(request)
+                .error_msg(&header, ResponseCode::Refused);
+
+            return match responder.send_response(response).await {
+                Ok(info) => info,
+                Err(_) => {
+                    let mut header = Header::new();
+                    header.set_response_code(ResponseCode::Refused);
+                    header.into()
+                }
+            };
+        }
+
         match self.do_handle_request(request, &mut responder).await {
-            Ok(info) => info,
+            Ok((info, question, answer)) => {
+                self.query_log.insert(
+                    src_ip,
+                    QueryLog {
+                        query_time: Utc::now(),
+                        question,
+                        answer,
+                    },
+                );
+                info
+            }
             Err(err) => {
                 let header = Header::response_from_request(request.header());
                 let response =
