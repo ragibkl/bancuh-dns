@@ -1,3 +1,4 @@
+mod admin;
 mod bind;
 mod compiler;
 mod config;
@@ -5,6 +6,8 @@ mod db;
 mod engine;
 mod fetch;
 mod handler;
+mod query_log;
+mod rate_limiter;
 mod resolver;
 mod tls;
 
@@ -28,6 +31,8 @@ use crate::{
     config::{Config, FileOrUrl},
     engine::AdblockEngine,
     handler::Handler,
+    query_log::QueryLogStore,
+    rate_limiter::new_rate_limiter,
     resolver::Resolver,
     tls::setup_tls,
 };
@@ -90,6 +95,22 @@ struct Args {
     /// Disable TLS certificate verification for the ACME server (for testing with Pebble)
     #[arg(long, env, value_name = "ACME_INSECURE")]
     acme_insecure: bool,
+
+    /// Port for the admin HTTP server (query logs UI)
+    #[arg(long, env, value_name = "ADMIN_PORT", default_value = "8080")]
+    admin_port: u16,
+
+    /// Maximum DNS requests per second per IP (0 = unlimited)
+    #[arg(long, env, value_name = "RATE_LIMIT", default_value = "100")]
+    rate_limit: u32,
+
+    /// IPv4 prefix length for rate limiting (e.g. 32 = per-IP, 24 = per /24 subnet)
+    #[arg(long, env, value_name = "RATE_LIMIT_IPV4_PREFIX", default_value = "32")]
+    rate_limit_ipv4_prefix: u8,
+
+    /// IPv6 prefix length for rate limiting (e.g. 48 = per /48 block, 128 = per-IP)
+    #[arg(long, env, value_name = "RATE_LIMIT_IPV6_PREFIX", default_value = "48")]
+    rate_limit_ipv6_prefix: u8,
 }
 
 async fn sigint() -> std::io::Result<()> {
@@ -118,6 +139,10 @@ async fn main() -> anyhow::Result<()> {
         acme_url,
         acme_cache_dir,
         acme_insecure,
+        admin_port,
+        rate_limit,
+        rate_limit_ipv4_prefix,
+        rate_limit_ipv6_prefix,
     } = Args::parse();
 
     let update_interval = Duration::from_secs(update_interval);
@@ -212,9 +237,23 @@ async fn main() -> anyhow::Result<()> {
         Resolver::new(&forwarders, &forwarders_port)
     };
 
-    tracker.close();
+    let query_log = Arc::new(QueryLogStore::new());
+    let rate_limiter = new_rate_limiter(rate_limit).map(Arc::new);
+    let handler = Handler::new(
+        engine,
+        resolver,
+        query_log.clone(),
+        rate_limiter,
+        rate_limit_ipv4_prefix,
+        rate_limit_ipv6_prefix,
+    );
 
-    let handler = Handler::new(engine, resolver);
+    tracing::info!("Starting admin HTTP server on port {admin_port}");
+    let cloned_query_log = query_log.clone();
+    let cloned_token = token.clone();
+    tracker.spawn(admin::serve(admin_port, cloned_query_log, cloned_token));
+
+    tracker.close();
 
     tracing::info!("Starting dns server");
     let mut server = ServerFuture::new(handler);
