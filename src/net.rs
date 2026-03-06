@@ -31,7 +31,7 @@ pub fn bind_udp(addr: SocketAddr) -> std::io::Result<tokio::net::UdpSocket> {
         Domain::IPV6
     };
     let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))?;
-    socket.set_reuse_address(true)?;
+    socket.set_reuse_port(true)?;
     if addr.is_ipv6() {
         socket.set_only_v6(true)?;
     }
