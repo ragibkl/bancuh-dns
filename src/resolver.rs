@@ -11,7 +11,10 @@ use hickory_resolver::{
 };
 use itertools::Itertools;
 
-pub fn create_resolver(forwarders: &[IpAddr], port: &u16) -> HickoryResolver<TokioConnectionProvider> {
+pub fn create_resolver(
+    forwarders: &[IpAddr],
+    port: &u16,
+) -> HickoryResolver<TokioConnectionProvider> {
     tracing::info!(
         "Setting up forwarders: [{}] on port: {port}",
         forwarders.iter().join(", ")

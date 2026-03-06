@@ -42,16 +42,34 @@ mod tests {
     #[test]
     fn test_mask_ipv4() {
         let ip: IpAddr = "192.168.1.100".parse().unwrap();
-        assert_eq!(mask_ip(ip, 32, 48), "192.168.1.100".parse::<IpAddr>().unwrap());
-        assert_eq!(mask_ip(ip, 24, 48), "192.168.1.0".parse::<IpAddr>().unwrap());
-        assert_eq!(mask_ip(ip, 16, 48), "192.168.0.0".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            mask_ip(ip, 32, 48),
+            "192.168.1.100".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(
+            mask_ip(ip, 24, 48),
+            "192.168.1.0".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(
+            mask_ip(ip, 16, 48),
+            "192.168.0.0".parse::<IpAddr>().unwrap()
+        );
     }
 
     #[test]
     fn test_mask_ipv6() {
         let ip: IpAddr = "2001:db8:1:2:3:4:5:6".parse().unwrap();
-        assert_eq!(mask_ip(ip, 32, 128), "2001:db8:1:2:3:4:5:6".parse::<IpAddr>().unwrap());
-        assert_eq!(mask_ip(ip, 32, 48), "2001:db8:1::".parse::<IpAddr>().unwrap());
-        assert_eq!(mask_ip(ip, 32, 64), "2001:db8:1:2::".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            mask_ip(ip, 32, 128),
+            "2001:db8:1:2:3:4:5:6".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(
+            mask_ip(ip, 32, 48),
+            "2001:db8:1::".parse::<IpAddr>().unwrap()
+        );
+        assert_eq!(
+            mask_ip(ip, 32, 64),
+            "2001:db8:1:2::".parse::<IpAddr>().unwrap()
+        );
     }
 }

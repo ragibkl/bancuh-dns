@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use axum::Router;
 use futures::StreamExt;
@@ -7,7 +7,6 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::DigitallySignedStruct;
 use rustls_acme::{caches::DirCache, AcmeConfig, AcmeState, ResolvesServerCertAcme, UseChallenge};
-use tokio::net::TcpListener;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 /// Skips all TLS certificate verification. Only for use with local test ACME servers (Pebble).
@@ -118,30 +117,52 @@ pub async fn setup_tls(
     // Spawn HTTP-01 challenge server on port 80
     let cloned_token = token.clone();
     tracker.spawn(async move {
-        let app = Router::new().route_service(
-            "/.well-known/acme-challenge/{token}",
-            challenge_service,
-        );
+        let app =
+            Router::new().route_service("/.well-known/acme-challenge/{token}", challenge_service);
 
-        let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 80));
-        let listener = match TcpListener::bind(&addr).await {
+        let v4_addr = SocketAddr::from(([0, 0, 0, 0], 80));
+        let v6_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 80));
+
+        let v4_listener = match crate::net::bind_tcp(v4_addr) {
             Ok(l) => l,
             Err(err) => {
-                tracing::error!("acme http challenge server bind failed: {err}");
+                tracing::error!("acme http challenge server bind failed on {v4_addr}: {err}");
                 cloned_token.cancel();
                 return;
             }
         };
-        tracing::info!("acme http challenge server listening on {addr}");
+        let v6_listener = match crate::net::bind_tcp(v6_addr) {
+            Ok(l) => l,
+            Err(err) => {
+                tracing::error!("acme http challenge server bind failed on {v6_addr}: {err}");
+                cloned_token.cancel();
+                return;
+            }
+        };
+        tracing::info!("acme http challenge server listening on port 80");
 
-        let shutdown = cloned_token.clone();
-        if let Err(err) = axum::serve(listener, app)
-            .with_graceful_shutdown(async move { shutdown.cancelled().await })
-            .await
-        {
-            tracing::error!("acme http challenge server error: {err}");
-            cloned_token.cancel();
-        }
+        let v4_app = app.clone();
+        let v4_shutdown = cloned_token.clone();
+        let v4_handle = tokio::spawn(async move {
+            if let Err(err) = axum::serve(v4_listener, v4_app)
+                .with_graceful_shutdown(async move { v4_shutdown.cancelled().await })
+                .await
+            {
+                tracing::error!("acme http challenge server (v4) error: {err}");
+            }
+        });
+
+        let v6_shutdown = cloned_token.clone();
+        let v6_handle = tokio::spawn(async move {
+            if let Err(err) = axum::serve(v6_listener, app)
+                .with_graceful_shutdown(async move { v6_shutdown.cancelled().await })
+                .await
+            {
+                tracing::error!("acme http challenge server (v6) error: {err}");
+            }
+        });
+
+        let _ = tokio::join!(v4_handle, v6_handle);
     });
 
     resolver

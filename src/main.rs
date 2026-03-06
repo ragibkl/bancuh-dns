@@ -6,6 +6,7 @@ mod db;
 mod engine;
 mod fetch;
 mod handler;
+mod net;
 mod query_log;
 mod rate_limiter;
 mod resolver;
@@ -18,12 +19,9 @@ use std::{
 };
 
 use clap::Parser;
-use hickory_server::{proto::udp::UdpSocket, ServerFuture};
+use hickory_server::ServerFuture;
 use itertools::Itertools;
-use tokio::{
-    net::TcpListener,
-    signal::unix::{signal, SignalKind},
-};
+use tokio::signal::unix::{signal, SignalKind};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
@@ -89,7 +87,12 @@ struct Args {
     acme_url: Option<String>,
 
     /// Directory for caching ACME account key and certificates
-    #[arg(long, env, value_name = "ACME_CACHE_DIR", default_value = "/var/cache/bancuh-dns/certs")]
+    #[arg(
+        long,
+        env,
+        value_name = "ACME_CACHE_DIR",
+        default_value = "/var/cache/bancuh-dns/certs"
+    )]
     acme_cache_dir: String,
 
     /// Disable TLS certificate verification for the ACME server (for testing with Pebble)
@@ -248,45 +251,72 @@ async fn main() -> anyhow::Result<()> {
         rate_limit_ipv6_prefix,
     );
 
-    tracing::info!("Starting admin HTTP server on port {admin_port}");
-    let cloned_query_log = query_log.clone();
-    let cloned_token = token.clone();
-    tracker.spawn(admin::serve(admin_port, cloned_query_log, cloned_token));
-
-    tracker.close();
-
     tracing::info!("Starting dns server");
     let mut server = ServerFuture::new(handler);
-    let socket_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
-    server.register_listener(TcpListener::bind(&socket_addr).await?, TCP_TIMEOUT);
-    server.register_socket(UdpSocket::bind(socket_addr).await?);
+    let v4_addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let v6_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
+    server.register_listener(net::bind_tcp(v4_addr)?, TCP_TIMEOUT);
+    server.register_listener(net::bind_tcp(v6_addr)?, TCP_TIMEOUT);
+    server.register_socket(net::bind_udp(v4_addr)?);
+    server.register_socket(net::bind_udp(v6_addr)?);
 
-    if tls_enabled {
+    let tls_resolver = if tls_enabled {
         let domain = tls_domain.expect("TLS_DOMAIN is required when TLS_ENABLED=true");
         let email = tls_email.expect("TLS_EMAIL is required when TLS_ENABLED=true");
 
         tracing::info!("Setting up TLS/ACME for domain: {domain}");
-        let resolver = setup_tls(domain.clone(), email, acme_url, acme_cache_dir, acme_insecure, &tracker, token.clone()).await;
+        let resolver = setup_tls(
+            domain.clone(),
+            email,
+            acme_url,
+            acme_cache_dir,
+            acme_insecure,
+            &tracker,
+            token.clone(),
+        )
+        .await;
 
         tracing::info!("Registering DoT listener on port 853");
-        let dot_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 853));
-        server.register_tls_listener(
-            TcpListener::bind(&dot_addr).await?,
-            TCP_TIMEOUT,
-            resolver.clone(),
-        )?;
+        let dot_v4 = SocketAddr::from(([0, 0, 0, 0], 853));
+        let dot_v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 853));
+        server.register_tls_listener(net::bind_tcp(dot_v4)?, TCP_TIMEOUT, resolver.clone())?;
+        server.register_tls_listener(net::bind_tcp(dot_v6)?, TCP_TIMEOUT, resolver.clone())?;
 
         tracing::info!("Registering DoH listener on port 443");
-        let doh_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 443));
+        let doh_v4 = SocketAddr::from(([0, 0, 0, 0], 443));
+        let doh_v6 = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], 443));
         server.register_https_listener(
-            TcpListener::bind(&doh_addr).await?,
+            net::bind_tcp(doh_v4)?,
             TCP_TIMEOUT,
-            resolver,
+            resolver.clone(),
+            Some(domain.clone()),
+            "/dns-query".to_string(),
+        )?;
+        server.register_https_listener(
+            net::bind_tcp(doh_v6)?,
+            TCP_TIMEOUT,
+            resolver.clone(),
             Some(domain),
             "/dns-query".to_string(),
         )?;
         tracing::info!("TLS/ACME setup done");
-    }
+
+        Some(resolver)
+    } else {
+        None
+    };
+
+    tracing::info!("Starting admin HTTP server on port {admin_port}");
+    let cloned_query_log = query_log.clone();
+    let cloned_token = token.clone();
+    tracker.spawn(admin::serve(
+        admin_port,
+        cloned_query_log,
+        tls_resolver,
+        cloned_token,
+    ));
+
+    tracker.close();
 
     tracing::info!("Starting dns server. DONE");
 

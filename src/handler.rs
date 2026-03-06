@@ -224,8 +224,16 @@ impl RequestHandler for Handler {
         let src_ip = normalize_ip(request.src());
 
         // Rate limiting check — silently drop to avoid backscatter from spoofed IPs
-        let rate_key = mask_ip(src_ip, self.rate_limit_ipv4_prefix, self.rate_limit_ipv6_prefix);
-        if self.rate_limiter.as_ref().is_some_and(|rl| rl.check_key(&rate_key).is_err()) {
+        let rate_key = mask_ip(
+            src_ip,
+            self.rate_limit_ipv4_prefix,
+            self.rate_limit_ipv6_prefix,
+        );
+        if self
+            .rate_limiter
+            .as_ref()
+            .is_some_and(|rl| rl.check_key(&rate_key).is_err())
+        {
             tracing::warn!("rate limited (dropped): {src_ip}");
             let mut header = Header::new();
             header.set_response_code(ResponseCode::Refused);

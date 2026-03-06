@@ -12,6 +12,7 @@ arc-swap = "1"
 async-trait = "0.1.74"
 clap = { version = "4.4.11", features = ["derive", "env"] }
 axum = "0.8"
+axum-server = { version = "0.8", features = ["tls-rustls"] }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 governor = "0.8"
@@ -28,6 +29,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json"] }
 rocksdb = "0.24.0"
 serde = { version ="1.0", features = ["derive"] }
 serde_json = "1"
+socket2 = { version = "0.5", features = ["all"] }
 serde_yaml = "0.9.27"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
