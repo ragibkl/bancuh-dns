@@ -99,11 +99,19 @@ struct Args {
     #[arg(long, env, value_name = "ACME_INSECURE")]
     acme_insecure: bool,
 
+    /// Enable the admin HTTP server (query logs UI)
+    #[arg(long, env, value_name = "ADMIN_ENABLED")]
+    admin_enabled: bool,
+
     /// Port for the admin HTTP server (query logs UI)
     #[arg(long, env, value_name = "ADMIN_PORT", default_value = "8080")]
     admin_port: u16,
 
-    /// Maximum DNS requests per second per IP (0 = unlimited)
+    /// Enable per-IP rate limiting
+    #[arg(long, env, value_name = "RATE_LIMIT_ENABLED")]
+    rate_limit_enabled: bool,
+
+    /// Maximum DNS requests per second per IP (requires RATE_LIMIT_ENABLED=true)
     #[arg(long, env, value_name = "RATE_LIMIT", default_value = "100")]
     rate_limit: u32,
 
@@ -142,7 +150,9 @@ async fn main() -> anyhow::Result<()> {
         acme_url,
         acme_cache_dir,
         acme_insecure,
+        admin_enabled,
         admin_port,
+        rate_limit_enabled,
         rate_limit,
         rate_limit_ipv4_prefix,
         rate_limit_ipv6_prefix,
@@ -240,8 +250,11 @@ async fn main() -> anyhow::Result<()> {
         Resolver::new(&forwarders, &forwarders_port)
     };
 
-    let query_log = Arc::new(QueryLogStore::new());
-    let rate_limiter = new_rate_limiter(rate_limit).map(Arc::new);
+    let query_log = admin_enabled.then(|| Arc::new(QueryLogStore::new()));
+    let rate_limiter = rate_limit_enabled
+        .then(|| new_rate_limiter(rate_limit))
+        .flatten()
+        .map(Arc::new);
     let handler = Handler::new(
         engine,
         resolver,
@@ -306,15 +319,15 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
-    tracing::info!("Starting admin HTTP server on port {admin_port}");
-    let cloned_query_log = query_log.clone();
-    let cloned_token = token.clone();
-    tracker.spawn(admin::serve(
-        admin_port,
-        cloned_query_log,
-        tls_resolver,
-        cloned_token,
-    ));
+    if let Some(query_log) = query_log {
+        let cloned_token = token.clone();
+        tracker.spawn(admin::serve(
+            admin_port,
+            query_log,
+            tls_resolver,
+            cloned_token,
+        ));
+    }
 
     tracker.close();
 

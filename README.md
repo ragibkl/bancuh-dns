@@ -17,8 +17,8 @@ Key strengths:
 - Privacy-first: defaults to a local BIND9 recursive resolver (no queries sent to public DNS)
 - Optional custom forwarders (e.g. `1.1.1.1`) via `FORWARDERS` env var
 - Optional DoT (DNS over TLS, port 853) and DoH (DNS over HTTPS, port 443) with automatic ACME/Let's Encrypt cert provisioning and renewal
-- Per-IP rate limiting to prevent DNS abuse
-- Query logging with built-in HTTP admin UI (port 8080)
+- Optional per-IP rate limiting to prevent DNS abuse, via `RATE_LIMIT_ENABLED` (off by default)
+- Optional query logging with a built-in HTTP admin UI, via `ADMIN_ENABLED` (off by default)
 
 ## Architecture
 
@@ -27,7 +27,7 @@ Key strengths:
                         │                  bancuh-dns                      │
                         │                                                  │
  DNS/UDP (port 53)  ───▶│  Handler                                         │
- DNS/TCP (port 53)  ───▶│    0. rate limit ──▶ silently dropped         │
+ DNS/TCP (port 53)  ───▶│    0. rate limit?  ──▶ silently dropped (opt-in)│
  DoT     (port 853) ───▶│    1. rewrite?   ──▶ forward alias               │
  DoH     (port 443) ───▶│    2. blocked?   ──▶ return 0.0.0.0              │
                         │    3. passthrough ──▶ Resolver                   │
@@ -59,15 +59,15 @@ Key strengths:
 | `AdblockDB` | Three RocksDB stores: `blacklist`, `whitelist`, `rewrites` |
 | `Resolver` | Forwards allowed queries to upstream DNS |
 | `bind` (BIND9) | Local recursive resolver used when no `FORWARDERS` are set |
-| Rate limiter | Per-IP token bucket (`governor`) — silently drops excess queries |
-| Query log | In-memory per-IP log store with 10-minute retention |
-| Admin server | HTTP UI + JSON API on port 8080 for viewing query logs |
+| Rate limiter | Optional per-IP token bucket (`governor`) — silently drops excess queries. Off unless `RATE_LIMIT_ENABLED` |
+| Query log | In-memory per-IP log store with 10-minute retention. Off unless `ADMIN_ENABLED` |
+| Admin server | HTTP UI + JSON API for viewing your own query logs. Off unless `ADMIN_ENABLED` |
 | Update loop | Fetches config, compiles a fresh DB, hot-swaps it with zero downtime |
 | ACME loop | Obtains and renews TLS certs via Let's Encrypt HTTP-01 challenge |
 
 ### Request flow
 
-1. Query arrives → **rate limit check** (per-IP token bucket) → silently dropped
+1. Query arrives → **rate limit check** (only if `RATE_LIMIT_ENABLED`) → silently dropped
 2. `Handler` looks up the domain in `AdblockEngine`
 3. **Rewrite match** → returns a CNAME to the alias, then resolves the alias
 4. **Blacklist match** (and not whitelisted) → returns `0.0.0.0` (A) or `::` (AAAA)
@@ -94,8 +94,28 @@ On startup and then every `UPDATE_INTERVAL` seconds (default: 86400), the update
 | `FORWARDERS` | _(unset)_ | Comma-separated upstream DNS IPs. If unset, uses local BIND9 |
 | `FORWARDERS_PORT` | `53` | Port for upstream forwarders |
 | `UPDATE_INTERVAL` | `86400` | Blocklist refresh interval in seconds |
-| `ADMIN_PORT` | `8080` | Port for the admin HTTP server (query logs UI) |
-| `RATE_LIMIT` | `100` | Max DNS requests per second per IP prefix (0 = unlimited) |
+
+### Admin / query logs (optional)
+
+Set `ADMIN_ENABLED=true` to enable the query-log HTTP server. It serves `/logs` (HTML)
+and `/api/logs` (JSON), each showing only the queries made by the caller's own IP
+address. When disabled, no log store is kept and no port is bound.
+
+| Env var | Default | Description |
+|---|---|---|
+| `ADMIN_ENABLED` | `false` | Enable the admin HTTP server and query-log store |
+| `ADMIN_PORT` | `8080` | Port for the admin HTTP server (also 8443 for HTTPS when `TLS_ENABLED`) |
+
+### Rate limiting (optional)
+
+Set `RATE_LIMIT_ENABLED=true` to enable per-IP rate limiting. Note that this keys on the
+DNS query source address, so it is only meaningful when clients reach this server
+directly — behind a proxy every query shares one bucket.
+
+| Env var | Default | Description |
+|---|---|---|
+| `RATE_LIMIT_ENABLED` | `false` | Enable per-IP rate limiting |
+| `RATE_LIMIT` | `100` | Max DNS requests per second per IP prefix |
 | `RATE_LIMIT_IPV4_PREFIX` | `32` | IPv4 prefix length for rate limiting (32 = per-IP, 24 = per /24 subnet) |
 | `RATE_LIMIT_IPV6_PREFIX` | `48` | IPv6 prefix length for rate limiting (48 = per /48 block, 128 = per-IP) |
 

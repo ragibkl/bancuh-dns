@@ -78,7 +78,7 @@ impl From<crate::engine::EngineError> for HandlerError {
 pub struct Handler {
     engine: Arc<AdblockEngine>,
     resolver: Resolver,
-    query_log: Arc<QueryLogStore>,
+    query_log: Option<Arc<QueryLogStore>>,
     rate_limiter: Option<Arc<RateLimiter>>,
     rate_limit_ipv4_prefix: u8,
     rate_limit_ipv6_prefix: u8,
@@ -88,7 +88,7 @@ impl Handler {
     pub fn new(
         engine: Arc<AdblockEngine>,
         resolver: Resolver,
-        query_log: Arc<QueryLogStore>,
+        query_log: Option<Arc<QueryLogStore>>,
         rate_limiter: Option<Arc<RateLimiter>>,
         rate_limit_ipv4_prefix: u8,
         rate_limit_ipv6_prefix: u8,
@@ -242,14 +242,16 @@ impl RequestHandler for Handler {
 
         match self.do_handle_request(request, &mut responder).await {
             Ok((info, question, answer)) => {
-                self.query_log.insert(
-                    src_ip,
-                    QueryLog {
-                        query_time: Utc::now(),
-                        question,
-                        answer,
-                    },
-                );
+                if let Some(query_log) = &self.query_log {
+                    query_log.insert(
+                        src_ip,
+                        QueryLog {
+                            query_time: Utc::now(),
+                            question,
+                            answer,
+                        },
+                    );
+                }
                 info
             }
             Err(err) => {
