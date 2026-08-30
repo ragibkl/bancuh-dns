@@ -19,7 +19,7 @@ use std::{
 };
 
 use clap::Parser;
-use hickory_server::ServerFuture;
+use hickory_server::Server;
 use itertools::Itertools;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -36,6 +36,9 @@ use crate::{
 };
 
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Queued outgoing responses per TCP connection. hickory 0.26 made this explicit on
+/// `register_listener`; 32 is the value hickory itself uses.
+const TCP_RESPONSE_BUFFER: usize = 32;
 const UNBOUND_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 const UNBOUND_PORT: u16 = 5353;
 
@@ -245,9 +248,9 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
-        Resolver::new(&[UNBOUND_IP], &UNBOUND_PORT)
+        Resolver::new(&[UNBOUND_IP], &UNBOUND_PORT)?
     } else {
-        Resolver::new(&forwarders, &forwarders_port)
+        Resolver::new(&forwarders, &forwarders_port)?
     };
 
     let query_log = admin_enabled.then(|| Arc::new(QueryLogStore::new()));
@@ -265,11 +268,11 @@ async fn main() -> anyhow::Result<()> {
     );
 
     tracing::info!("Starting dns server");
-    let mut server = ServerFuture::new(handler);
+    let mut server = Server::new(handler);
     let v4_addr = SocketAddr::from(([0, 0, 0, 0], port));
     let v6_addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 0], port));
-    server.register_listener(net::bind_tcp(v4_addr)?, TCP_TIMEOUT);
-    server.register_listener(net::bind_tcp(v6_addr)?, TCP_TIMEOUT);
+    server.register_listener(net::bind_tcp(v4_addr)?, TCP_TIMEOUT, TCP_RESPONSE_BUFFER);
+    server.register_listener(net::bind_tcp(v6_addr)?, TCP_TIMEOUT, TCP_RESPONSE_BUFFER);
     server.register_socket(net::bind_udp(v4_addr)?);
     server.register_socket(net::bind_udp(v6_addr)?);
 

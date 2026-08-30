@@ -6,16 +6,17 @@ use std::{
 use chrono::Utc;
 
 use hickory_resolver::{
-    Name,
+    net::NetError,
     proto::rr::{
-        RData, Record,
+        Name, RData, Record,
         rdata::{A, AAAA, CNAME},
     },
 };
 use hickory_server::{
-    authority::MessageResponseBuilder,
-    proto::op::{Header, MessageType, OpCode, ResponseCode},
+    net::runtime::Time,
+    proto::op::{Header, HeaderCounts, MessageType, Metadata, OpCode, ResponseCode},
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
+    zone_handler::MessageResponseBuilder,
 };
 
 use crate::{
@@ -52,8 +53,8 @@ impl From<std::io::Error> for HandlerError {
     }
 }
 
-impl From<hickory_resolver::ResolveError> for HandlerError {
-    fn from(err: hickory_resolver::ResolveError) -> Self {
+impl From<NetError> for HandlerError {
+    fn from(err: NetError) -> Self {
         // Only a real NXDOMAIN may be reported as NXDomain. `is_no_records_found()` also
         // covers ServFail, Refused, FormErr and friends, and answering those with NXDomain
         // would be worse than a plain failure, since clients cache NXDOMAIN negatively.
@@ -115,12 +116,12 @@ impl Handler {
         responder: &mut R,
     ) -> Result<(ResponseInfo, String), HandlerError> {
         // make sure the request is a query
-        if request.op_code() != OpCode::Query {
+        if request.metadata.op_code != OpCode::Query {
             return Err(HandlerError::refused("Unsupported OpCode"));
         }
 
         // make sure the message type is a query
-        if request.message_type() != MessageType::Query {
+        if request.metadata.message_type != MessageType::Query {
             return Err(HandlerError::refused("Unsupported MessageType"));
         }
 
@@ -189,9 +190,9 @@ impl Handler {
         responder: &mut R,
         records: &[Record],
     ) -> Result<ResponseInfo, HandlerError> {
-        let header = Header::response_from_request(request.header());
+        let metadata = Metadata::response_from_request(&request.metadata);
         let response = MessageResponseBuilder::from_message_request(request).build(
-            header,
+            metadata,
             records,
             &[],
             &[],
@@ -200,6 +201,18 @@ impl Handler {
 
         Ok(responder.send_response(response).await?)
     }
+}
+
+/// Build a bare `ResponseInfo` carrying just a response code, for the paths that report
+/// an outcome without emitting a message (rate-limit drops, and failure to send a reply).
+fn response_info(request: &Request, response_code: ResponseCode) -> ResponseInfo {
+    let mut metadata = Metadata::response_from_request(&request.metadata);
+    metadata.response_code = response_code;
+    Header {
+        metadata,
+        counts: HeaderCounts::default(),
+    }
+    .into()
 }
 
 fn normalize_ip(addr: std::net::SocketAddr) -> IpAddr {
@@ -218,7 +231,7 @@ fn normalize_ip(addr: std::net::SocketAddr) -> IpAddr {
 
 #[async_trait::async_trait]
 impl RequestHandler for Handler {
-    async fn handle_request<R: ResponseHandler>(
+    async fn handle_request<R: ResponseHandler, T: Time>(
         &self,
         request: &Request,
         mut responder: R,
@@ -237,9 +250,7 @@ impl RequestHandler for Handler {
             .is_some_and(|rl| rl.check_key(&rate_key).is_err())
         {
             tracing::warn!("rate limited (dropped): {src_ip}");
-            let mut header = Header::new();
-            header.set_response_code(ResponseCode::Refused);
-            return header.into();
+            return response_info(request, ResponseCode::Refused);
         }
 
         // Derived up front so that a failed lookup can still be logged against its question,
@@ -255,17 +266,13 @@ impl RequestHandler for Handler {
                 tracing::warn!("query failed: {question} from {src_ip}: {err}");
                 let answer = format!("error: {}", err.0);
 
-                let header = Header::response_from_request(request.header());
-                let response =
-                    MessageResponseBuilder::from_message_request(request).error_msg(&header, err.0);
+                let metadata = Metadata::response_from_request(&request.metadata);
+                let response = MessageResponseBuilder::from_message_request(request)
+                    .error_msg(&metadata, err.0);
 
                 let info = match responder.send_response(response).await {
                     Ok(ok) => ok,
-                    Err(_) => {
-                        let mut header = Header::new();
-                        header.set_response_code(ResponseCode::ServFail);
-                        header.into()
-                    }
+                    Err(_) => response_info(request, ResponseCode::ServFail),
                 };
 
                 (info, answer)
