@@ -263,7 +263,14 @@ impl RequestHandler for Handler {
         let (info, answer) = match self.do_handle_request(request, &mut responder).await {
             Ok((info, answer)) => (info, answer),
             Err(err) => {
-                tracing::warn!("query failed: {question} from {src_ip}: {err}");
+                // NXDOMAIN is a routine outcome on a public resolver (typos, WPAD probes,
+                // search-domain suffixes), so warning on it would be constant noise.
+                // Genuine failures still warn.
+                if err.0 == ResponseCode::NXDomain {
+                    tracing::debug!("query nxdomain: {question} from {src_ip}");
+                } else {
+                    tracing::warn!("query failed: {question} from {src_ip}: {err}");
+                }
                 let answer = format!("error: {}", err.0);
 
                 let metadata = Metadata::response_from_request(&request.metadata);
