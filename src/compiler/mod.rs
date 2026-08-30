@@ -3,11 +3,24 @@ mod parser;
 mod rewrites;
 mod whitelist;
 
+use std::sync::Arc;
+
+use thiserror::Error;
+
 use crate::{config::Config, db::AdblockDB};
 
 use self::{
     blacklist::BlacklistCompiler, rewrites::RewritesCompiler, whitelist::WhitelistCompiler,
 };
+
+#[derive(Debug, Error)]
+pub enum CompileError {
+    #[error(transparent)]
+    DB(#[from] crate::db::DBError),
+
+    #[error("compile task failed to complete: {0}")]
+    Join(#[from] tokio::task::JoinError),
+}
 
 #[derive(Debug)]
 pub struct AdblockCompiler {
@@ -29,26 +42,41 @@ impl AdblockCompiler {
         }
     }
 
-    pub async fn compile(&self, db: &AdblockDB) {
+    /// Compile every configured source into `db`.
+    ///
+    /// The writes are synchronous RocksDB calls over millions of domains. Running them
+    /// inline holds the async worker thread for the length of each source, which starves
+    /// the DNS handler on a single-core host, so each batch is handed to the blocking
+    /// pool instead.
+    pub async fn compile(&self, db: Arc<AdblockDB>) -> Result<(), CompileError> {
         for wl in &self.whitelists {
             let domains = wl.load_whitelist().await;
-            for d in domains {
-                let _ = db.whitelist.put(&d.0);
-            }
+            let db = db.clone();
+            tokio::task::spawn_blocking(move || {
+                db.whitelist.put_all(domains.iter().map(|d| d.0.as_str()))
+            })
+            .await??;
         }
 
         for bl in &self.blacklists {
             let domains = bl.load_blacklist().await;
-            for d in domains {
-                let _ = db.blacklist.put(&d.0);
-            }
+            let db = db.clone();
+            tokio::task::spawn_blocking(move || {
+                db.blacklist.put_all(domains.iter().map(|d| d.0.as_str()))
+            })
+            .await??;
         }
 
         for rw in &self.rewrites {
             let cnames = rw.load_rewrites().await;
-            for c in cnames {
-                let _ = db.rewrites.put_alias(&c.domain.0, &c.alias.0);
-            }
+            let db = db.clone();
+            tokio::task::spawn_blocking(move || {
+                db.rewrites
+                    .put_aliases_all(cnames.iter().map(|c| (c.domain.0.as_str(), c.alias.0.as_str())))
+            })
+            .await??;
         }
+
+        Ok(())
     }
 }

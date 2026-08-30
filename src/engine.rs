@@ -4,19 +4,19 @@ use arc_swap::ArcSwap;
 use thiserror::Error;
 
 use crate::{
-    compiler::AdblockCompiler,
-    config::{Config, FileOrUrl, LoadConfigError},
+    compiler::{AdblockCompiler, CompileError},
+    config::{Config, FileOrUrl},
     db::AdblockDB,
 };
 
-async fn load_definition(db: &AdblockDB, config_url: &FileOrUrl) -> Result<(), LoadConfigError> {
+async fn load_definition(db: Arc<AdblockDB>, config_url: &FileOrUrl) -> Result<(), EngineError> {
     tracing::info!("Loading adblock config. config_url: {config_url}");
     let config = Config::load(config_url).await?;
     let compiler = AdblockCompiler::from_config(&config);
     tracing::info!("Loading adblock config. config_url: {config_url}. DONE");
 
     tracing::info!("Compiling adblock");
-    compiler.compile(db).await;
+    compiler.compile(db).await?;
     tracing::info!("Compiling adblock DONE");
 
     Ok(())
@@ -29,6 +29,9 @@ pub enum EngineError {
 
     #[error(transparent)]
     LoadConfig(#[from] crate::config::LoadConfigError),
+
+    #[error(transparent)]
+    Compile(#[from] CompileError),
 }
 
 #[derive(Debug)]
@@ -47,12 +50,13 @@ impl AdblockEngine {
     pub async fn run_update(&self) -> Result<(), EngineError> {
         let config_url = self.config_url.clone();
 
-        // instantiate a new_db and load adblock definition into it
-        let new_db = AdblockDB::create()?;
-        load_definition(&new_db, &config_url).await?;
+        // instantiate a new_db and load adblock definition into it. A failed write now
+        // propagates, so a partially compiled db is dropped rather than swapped in.
+        let new_db = Arc::new(AdblockDB::create()?);
+        load_definition(new_db.clone(), &config_url).await?;
 
         // atomically swap the new_db in place; old_db is dropped here
-        self.db.store(Arc::new(new_db));
+        self.db.store(new_db);
 
         Ok(())
     }

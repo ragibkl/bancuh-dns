@@ -1,10 +1,14 @@
 use std::{path::PathBuf, string::FromUtf8Error};
 
 use rand::{Rng, distr::Alphanumeric};
-use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
+use rocksdb::{DBWithThreadMode, MultiThreaded, Options, WriteBatch};
 use thiserror::Error;
 
 pub type DB = DBWithThreadMode<MultiThreaded>;
+
+/// Entries per RocksDB write batch. Batching amortises the per-write overhead across the
+/// millions of domains a compile writes; the cap keeps any single batch small in memory.
+const WRITE_BATCH_SIZE: usize = 10_000;
 
 fn rand_string() -> String {
     rand::rng()
@@ -51,20 +55,52 @@ impl DomainStore {
         Ok(Self { db })
     }
 
-    pub fn put(&self, domain: &str) -> Result<(), DBError> {
-        if let Some(db) = &self.db {
-            let domain = normalize_name(domain);
-            db.put(domain, "true")?;
+    /// Write many domains in batches.
+    ///
+    /// Synchronous and potentially long-running: call this from a blocking context, not
+    /// directly on an async worker thread.
+    pub fn put_all<I, S>(&self, domains: I) -> Result<(), DBError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let Some(db) = &self.db else {
+            return Ok(());
+        };
+
+        let mut batch = WriteBatch::default();
+        for domain in domains {
+            batch.put(normalize_name(domain.as_ref()), "true");
+            if batch.len() >= WRITE_BATCH_SIZE {
+                db.write(std::mem::take(&mut batch))?;
+            }
+        }
+        if !batch.is_empty() {
+            db.write(batch)?;
         }
 
         Ok(())
     }
 
-    pub fn put_alias(&self, domain: &str, alias: &str) -> Result<(), DBError> {
-        if let Some(db) = &self.db {
-            let domain = normalize_name(domain);
-            let alias = normalize_name(alias);
-            db.put(domain, alias)?;
+    /// Write many domain -> alias pairs in batches. See [`DomainStore::put_all`].
+    pub fn put_aliases_all<I, S>(&self, aliases: I) -> Result<(), DBError>
+    where
+        I: IntoIterator<Item = (S, S)>,
+        S: AsRef<str>,
+    {
+        let Some(db) = &self.db else {
+            return Ok(());
+        };
+
+        let mut batch = WriteBatch::default();
+        for (domain, alias) in aliases {
+            batch.put(normalize_name(domain.as_ref()), normalize_name(alias.as_ref()));
+            if batch.len() >= WRITE_BATCH_SIZE {
+                db.write(std::mem::take(&mut batch))?;
+            }
+        }
+        if !batch.is_empty() {
+            db.write(batch)?;
         }
 
         Ok(())
