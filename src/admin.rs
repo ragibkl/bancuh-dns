@@ -1,12 +1,12 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use axum::{
+    Json, Router,
     extract::{ConnectInfo, State},
     response::Html,
     routing::get,
-    Json, Router,
 };
-use axum_server::{tls_rustls::RustlsConfig, Handle};
+use axum_server::{Handle, tls_rustls::RustlsConfig};
 use rustls_acme::ResolvesServerCertAcme;
 use tokio_util::sync::CancellationToken;
 

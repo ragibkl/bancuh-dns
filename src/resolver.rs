@@ -1,82 +1,70 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 
 use hickory_resolver::{
-    config::{NameServerConfig, ResolverConfig, ResolverOpts},
-    name_server::TokioConnectionProvider,
+    TokioResolver,
+    config::{ConnectionConfig, NameServerConfig, ProtocolConfig, ResolverConfig, ResolverOpts},
+    net::{DnsError, NetError, NoRecords, runtime::TokioRuntimeProvider},
     proto::{
         op::ResponseCode,
         rr::{Record, RecordType},
-        xfer::Protocol,
-        ProtoErrorKind,
     },
-    ResolveError, Resolver as HickoryResolver,
 };
 use itertools::Itertools;
 
-pub fn create_resolver(
-    forwarders: &[IpAddr],
-    port: &u16,
-) -> HickoryResolver<TokioConnectionProvider> {
+pub fn create_resolver(forwarders: &[IpAddr], port: &u16) -> Result<TokioResolver, NetError> {
     tracing::info!(
         "Setting up forwarders: [{}] on port: {port}",
         forwarders.iter().join(", ")
     );
 
-    let mut config = ResolverConfig::new();
+    let mut config = ResolverConfig::default();
     forwarders.iter().for_each(|f| {
-        let addr = SocketAddr::new(*f, *port);
-        tracing::info!("Setting up forwarder: {addr}");
-        let name_server = NameServerConfig::new(addr, Protocol::Udp);
+        tracing::info!("Setting up forwarder: {f}:{port}");
+        let mut connection = ConnectionConfig::new(ProtocolConfig::Udp);
+        connection.port = *port;
+        let name_server = NameServerConfig::new(*f, true, vec![connection]);
         config.add_name_server(name_server);
     });
 
     let options = ResolverOpts::default();
 
-    HickoryResolver::builder_with_config(config, TokioConnectionProvider::default())
+    TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
         .with_options(options)
         .build()
 }
 
 #[derive(Debug)]
 pub struct Resolver {
-    resolver: HickoryResolver<TokioConnectionProvider>,
+    resolver: TokioResolver,
 }
 
 impl Resolver {
-    pub fn new(forwarders: &[IpAddr], port: &u16) -> Self {
-        let resolver = create_resolver(forwarders, port);
-        Self { resolver }
+    pub fn new(forwarders: &[IpAddr], port: &u16) -> Result<Self, NetError> {
+        let resolver = create_resolver(forwarders, port)?;
+        Ok(Self { resolver })
     }
 
     /// Lookup records from forward resolver
     ///
     /// A genuine NODATA answer (the name exists, but holds no records of this type) is
-    /// reported by hickory as `NoRecordsFound` carrying a `NoError` response code, and is
-    /// returned here as an empty Vec.
+    /// reported as `NoRecordsFound` carrying a `NoError` response code, and is returned
+    /// here as an empty Vec.
     ///
-    /// Note that `is_no_records_found()` is not usable for that test: hickory folds
-    /// ServFail, Refused, FormErr, NotImp and the rest of the failure codes into the same
-    /// `NoRecordsFound` kind, so matching on it would silently turn upstream failures into
-    /// successful empty answers. Match on the response code instead, so that NXDOMAIN and
-    /// real failures both propagate to the caller.
+    /// Match on the response code rather than `is_no_records_found()`: that predicate is
+    /// still true for NXDOMAIN, and answering an upstream failure with an empty success
+    /// would hide it from clients, which is what it used to do before hickory 0.26 split
+    /// real failures out into `DnsError::ResponseCode`.
     pub async fn lookup(
         &self,
         name: &str,
         query_type: RecordType,
-    ) -> Result<Vec<Record>, ResolveError> {
+    ) -> Result<Vec<Record>, NetError> {
         match self.resolver.lookup(name, query_type).await {
-            Ok(lookup) => Ok(lookup.records().to_owned()),
-            Err(err)
-                if matches!(
-                    err.proto().map(|proto| proto.kind()),
-                    Some(ProtoErrorKind::NoRecordsFound {
-                        response_code: ResponseCode::NoError,
-                        ..
-                    })
-                ) =>
-            {
-                Ok(Vec::new())
-            }
+            Ok(lookup) => Ok(lookup.answers().to_vec()),
+            Err(NetError::Dns(DnsError::NoRecordsFound(NoRecords {
+                response_code: ResponseCode::NoError,
+                ..
+            }))) => Ok(Vec::new()),
             Err(err) => Err(err),
         }
     }

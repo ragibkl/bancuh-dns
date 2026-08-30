@@ -1,8 +1,8 @@
 use thiserror::Error;
 
 use super::{
-    file_or_url::ParseFileOrUrlError, raw_config::RawSource, BlacklistFormat, FileOrUrl,
-    OverrideFormat, WhitelistFormat,
+    BlacklistFormat, FileOrUrl, OverrideFormat, WhitelistFormat, file_or_url::ParseFileOrUrlError,
+    raw_config::RawSource,
 };
 
 #[derive(Error, Debug)]
