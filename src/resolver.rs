@@ -4,8 +4,10 @@ use hickory_resolver::{
     config::{NameServerConfig, ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
     proto::{
+        op::ResponseCode,
         rr::{Record, RecordType},
         xfer::Protocol,
+        ProtoErrorKind,
     },
     ResolveError, Resolver as HickoryResolver,
 };
@@ -47,7 +49,16 @@ impl Resolver {
     }
 
     /// Lookup records from forward resolver
-    /// If the call errors with NoRecordsFound and NoError response_code, we simply return Ok with an empty Vec
+    ///
+    /// A genuine NODATA answer (the name exists, but holds no records of this type) is
+    /// reported by hickory as `NoRecordsFound` carrying a `NoError` response code, and is
+    /// returned here as an empty Vec.
+    ///
+    /// Note that `is_no_records_found()` is not usable for that test: hickory folds
+    /// ServFail, Refused, FormErr, NotImp and the rest of the failure codes into the same
+    /// `NoRecordsFound` kind, so matching on it would silently turn upstream failures into
+    /// successful empty answers. Match on the response code instead, so that NXDOMAIN and
+    /// real failures both propagate to the caller.
     pub async fn lookup(
         &self,
         name: &str,
@@ -55,7 +66,17 @@ impl Resolver {
     ) -> Result<Vec<Record>, ResolveError> {
         match self.resolver.lookup(name, query_type).await {
             Ok(lookup) => Ok(lookup.records().to_owned()),
-            Err(err) if err.is_no_records_found() && !err.is_nx_domain() => Ok(Vec::new()),
+            Err(err)
+                if matches!(
+                    err.proto().map(|proto| proto.kind()),
+                    Some(ProtoErrorKind::NoRecordsFound {
+                        response_code: ResponseCode::NoError,
+                        ..
+                    })
+                ) =>
+            {
+                Ok(Vec::new())
+            }
             Err(err) => Err(err),
         }
     }

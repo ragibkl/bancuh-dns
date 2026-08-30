@@ -54,7 +54,10 @@ impl From<std::io::Error> for HandlerError {
 
 impl From<hickory_resolver::ResolveError> for HandlerError {
     fn from(err: hickory_resolver::ResolveError) -> Self {
-        if err.is_nx_domain() || err.is_no_records_found() {
+        // Only a real NXDOMAIN may be reported as NXDomain. `is_no_records_found()` also
+        // covers ServFail, Refused, FormErr and friends, and answering those with NXDomain
+        // would be worse than a plain failure, since clients cache NXDOMAIN negatively.
+        if err.is_nx_domain() {
             Self::nx_domain(err.to_string())
         } else {
             Self::serv_fail(err)
@@ -105,12 +108,12 @@ impl Handler {
 }
 
 impl Handler {
-    /// Returns (ResponseInfo, question_string, answer_classification)
+    /// Returns (ResponseInfo, answer_classification)
     async fn do_handle_request<R: ResponseHandler>(
         &self,
         request: &Request,
         responder: &mut R,
-    ) -> Result<(ResponseInfo, String, String), HandlerError> {
+    ) -> Result<(ResponseInfo, String), HandlerError> {
         // make sure the request is a query
         if request.op_code() != OpCode::Query {
             return Err(HandlerError::refused("Unsupported OpCode"));
@@ -123,7 +126,6 @@ impl Handler {
 
         let request_info = request.request_info().map_err(HandlerError::serv_fail)?;
         let name = request_info.query.name();
-        let question = format!("{} {}", name, request_info.query.query_type());
 
         // check engine for domain override redirection
         if let Some(alias) = self.engine.get_redirect(&name.to_string()).await? {
@@ -143,7 +145,7 @@ impl Handler {
             records.extend(alias_records);
 
             let info = self.send_response(request, responder, &records).await?;
-            return Ok((info, question, format!("rewritten: {alias}")));
+            return Ok((info, format!("rewritten: {alias}")));
         }
 
         // check engine if domain is blocked
@@ -156,7 +158,7 @@ impl Handler {
                     let records = vec![record];
 
                     let info = self.send_response(request, responder, &records).await?;
-                    return Ok((info, question, "blocked".to_string()));
+                    return Ok((info, "blocked".to_string()));
                 }
                 hickory_resolver::proto::rr::RecordType::AAAA => {
                     let ipv6_null_addr = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0);
@@ -165,7 +167,7 @@ impl Handler {
                     let records = vec![record];
 
                     let info = self.send_response(request, responder, &records).await?;
-                    return Ok((info, question, "blocked".to_string()));
+                    return Ok((info, "blocked".to_string()));
                 }
                 _ => return Err(HandlerError::nx_domain(name.to_string())),
             }
@@ -177,7 +179,7 @@ impl Handler {
             .lookup(&name.to_string(), request_info.query.query_type())
             .await?;
         let info = self.send_response(request, responder, &records).await?;
-        Ok((info, question, "forwarded".to_string()))
+        Ok((info, "forwarded".to_string()))
     }
 
     /// build header and return response
@@ -240,34 +242,47 @@ impl RequestHandler for Handler {
             return header.into();
         }
 
-        match self.do_handle_request(request, &mut responder).await {
-            Ok((info, question, answer)) => {
-                if let Some(query_log) = &self.query_log {
-                    query_log.insert(
-                        src_ip,
-                        QueryLog {
-                            query_time: Utc::now(),
-                            question,
-                            answer,
-                        },
-                    );
-                }
-                info
-            }
+        // Derived up front so that a failed lookup can still be logged against its question,
+        // rather than showing up in the query log as a blank row.
+        let question = request
+            .request_info()
+            .map(|info| format!("{} {}", info.query.name(), info.query.query_type()))
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        let (info, answer) = match self.do_handle_request(request, &mut responder).await {
+            Ok((info, answer)) => (info, answer),
             Err(err) => {
+                tracing::warn!("query failed: {question} from {src_ip}: {err}");
+                let answer = format!("error: {}", err.0);
+
                 let header = Header::response_from_request(request.header());
                 let response =
                     MessageResponseBuilder::from_message_request(request).error_msg(&header, err.0);
 
-                match responder.send_response(response).await {
+                let info = match responder.send_response(response).await {
                     Ok(ok) => ok,
                     Err(_) => {
                         let mut header = Header::new();
                         header.set_response_code(ResponseCode::ServFail);
                         header.into()
                     }
-                }
+                };
+
+                (info, answer)
             }
+        };
+
+        if let Some(query_log) = &self.query_log {
+            query_log.insert(
+                src_ip,
+                QueryLog {
+                    query_time: Utc::now(),
+                    question,
+                    answer,
+                },
+            );
         }
+
+        info
     }
 }
