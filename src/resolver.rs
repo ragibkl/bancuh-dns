@@ -1,15 +1,15 @@
 use std::net::{IpAddr, SocketAddr};
 
 use hickory_resolver::{
+    ResolveError, Resolver as HickoryResolver,
     config::{NameServerConfig, ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
     proto::{
+        ProtoErrorKind,
         op::ResponseCode,
         rr::{Record, RecordType},
         xfer::Protocol,
-        ProtoErrorKind,
     },
-    ResolveError, Resolver as HickoryResolver,
 };
 use itertools::Itertools;
 

@@ -21,7 +21,7 @@ use std::{
 use clap::Parser;
 use hickory_server::ServerFuture;
 use itertools::Itertools;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{

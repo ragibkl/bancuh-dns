@@ -6,11 +6,11 @@ use std::{
 use chrono::Utc;
 
 use hickory_resolver::{
-    proto::rr::{
-        rdata::{A, AAAA, CNAME},
-        RData, Record,
-    },
     Name,
+    proto::rr::{
+        RData, Record,
+        rdata::{A, AAAA, CNAME},
+    },
 };
 use hickory_server::{
     authority::MessageResponseBuilder,
@@ -21,7 +21,7 @@ use hickory_server::{
 use crate::{
     engine::AdblockEngine,
     query_log::{QueryLog, QueryLogStore},
-    rate_limiter::{mask_ip, RateLimiter},
+    rate_limiter::{RateLimiter, mask_ip},
     resolver::Resolver,
 };
 

@@ -1,6 +1,6 @@
 use std::{path::PathBuf, string::FromUtf8Error};
 
-use rand::{distr::Alphanumeric, Rng};
+use rand::{Rng, distr::Alphanumeric};
 use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
 use thiserror::Error;
 
