@@ -1,5 +1,4 @@
 mod admin;
-mod bind;
 mod compiler;
 mod config;
 mod db;
@@ -11,6 +10,7 @@ mod query_log;
 mod rate_limiter;
 mod resolver;
 mod tls;
+mod unbound;
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -25,7 +25,6 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
 use crate::{
-    bind::spawn_bind,
     config::{Config, FileOrUrl},
     engine::AdblockEngine,
     handler::Handler,
@@ -33,11 +32,12 @@ use crate::{
     rate_limiter::new_rate_limiter,
     resolver::Resolver,
     tls::setup_tls,
+    unbound::spawn_unbound,
 };
 
 const TCP_TIMEOUT: Duration = Duration::from_secs(10);
-const BIND_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-const BIND_PORT: u16 = 5353;
+const UNBOUND_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+const UNBOUND_PORT: u16 = 5353;
 
 #[derive(Parser, Debug)]
 #[command(name = "Bancuh DNS")]
@@ -220,32 +220,32 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting engine-update task. DONE");
 
     let resolver = if forwarders.is_empty() {
-        tracing::info!("Starting bind");
+        tracing::info!("Starting unbound");
         let cloned_token = token.clone();
         tracker.spawn(async move {
-            let mut child = match spawn_bind() {
+            let mut child = match spawn_unbound() {
                 Ok(child) => child,
                 Err(err) => {
-                    tracing::error!("Starting bind. ERROR: {err}");
+                    tracing::error!("Starting unbound. ERROR: {err}");
                     cloned_token.cancel();
                     return;
                 }
             };
-            tracing::info!("Starting bind. DONE");
+            tracing::info!("Starting unbound. DONE");
 
             tokio::select! {
                 _ = cloned_token.cancelled() => {
-                    tracing::info!("bind received cancel signal");
+                    tracing::info!("unbound received cancel signal");
                     let _ = child.kill().await;
                 },
                 _ = child.wait() => {
-                    tracing::info!("bind ended prematurely");
+                    tracing::info!("unbound ended prematurely");
                     cloned_token.cancel();
                 },
             }
         });
 
-        Resolver::new(&[BIND_IP], &BIND_PORT)
+        Resolver::new(&[UNBOUND_IP], &UNBOUND_PORT)
     } else {
         Resolver::new(&forwarders, &forwarders_port)
     };

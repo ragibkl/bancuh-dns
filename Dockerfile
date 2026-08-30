@@ -30,13 +30,20 @@ RUN cargo build --release
 FROM alpine:3.23 AS runtime
 
 # install runtime dependencies
-RUN apk add openssl bind libgcc libstdc++
+# bind-tools provides dig, used by the HEALTHCHECK below. It used to arrive
+# transitively via the bind package, so it must now be requested explicitly.
+RUN apk add unbound bind-tools libgcc libstdc++
 
 # set default logging, can be overridden
 ENV RUST_LOG=info
 
-# copy bind config
-COPY named.conf /etc/bind/named.conf
+# copy unbound config
+COPY unbound.conf /etc/unbound/unbound.conf
+
+# prime the DNSSEC root trust anchor. unbound does not validate without one,
+# and unbound-anchor exits 1 when it writes a new key, which is not an error.
+RUN unbound-anchor -a /etc/unbound/root.key || true; \
+    unbound-checkconf /etc/unbound/unbound.conf
 
 # copy binary
 COPY --from=builder /code/bancuh-dns/target/release/bancuh-dns /usr/local/bin/bancuh-dns
