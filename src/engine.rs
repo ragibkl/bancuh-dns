@@ -66,7 +66,7 @@ impl AdblockEngine {
         let alias = db_guard.rewrites.get(name)?;
 
         if let Some(alias) = alias.as_deref() {
-            tracing::info!("rewrite: {name} to: {alias}");
+            tracing::debug!("rewrite: {name} to: {alias}");
         }
 
         Ok(alias)
@@ -76,12 +76,12 @@ impl AdblockEngine {
         let db_guard = self.db.load();
 
         if db_guard.whitelist.contains(name)? {
-            tracing::info!("whitelist: {name}");
+            tracing::debug!("whitelist: {name}");
             return Ok(false);
         }
 
         if db_guard.blacklist.contains(name)? {
-            tracing::info!("blacklist: {name}");
+            tracing::debug!("blacklist: {name}");
             return Ok(true);
         }
 

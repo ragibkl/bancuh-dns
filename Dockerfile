@@ -34,8 +34,13 @@ FROM alpine:3.24 AS runtime
 # transitively via the bind package, so it must now be requested explicitly.
 RUN apk add unbound bind-tools libgcc libstdc++
 
-# set default logging, can be overridden
-ENV RUST_LOG=info
+# set default logging, can be overridden.
+#
+# hickory_server::server logs one line per query at info, which was ~76% of all
+# output and pushed the container's rotated logs down to about ten minutes of
+# history -- long enough to lose the daily update, a failed compile or an OOM
+# before anyone looks. Raise it to warn; set RUST_LOG=info to get it back.
+ENV RUST_LOG=info,hickory_server::server=warn
 
 # copy unbound config
 COPY unbound.conf /etc/unbound/unbound.conf
