@@ -263,13 +263,17 @@ impl RequestHandler for Handler {
         let (info, answer) = match self.do_handle_request(request, &mut responder).await {
             Ok((info, answer)) => (info, answer),
             Err(err) => {
-                // NXDOMAIN is a routine outcome on a public resolver (typos, WPAD probes,
-                // search-domain suffixes), so warning on it would be constant noise.
-                // Genuine failures still warn.
+                // Both arms are routine on a public resolver: NXDOMAIN from typos, WPAD
+                // probes and search-domain suffixes, and SERVFAIL from the steady supply
+                // of dead domains and broken nameservers on the internet. Warning per
+                // failure made this ~100% of log volume on the busier nodes, which cost
+                // more in lost log retention than the line was worth. Whether the server
+                // is actually failing is answered by the uptime checks, which fail on a
+                // bad response; the HEALTHCHECK cannot, since dig exits 0 on SERVFAIL.
                 if err.0 == ResponseCode::NXDomain {
                     tracing::debug!("query nxdomain: {question} from {src_ip}");
                 } else {
-                    tracing::warn!("query failed: {question} from {src_ip}: {err}");
+                    tracing::debug!("query failed: {question} from {src_ip}: {err}");
                 }
                 let answer = format!("error: {}", err.0);
 
