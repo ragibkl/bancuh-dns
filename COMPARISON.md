@@ -71,13 +71,25 @@ production node:
 | Blocky 624 + unbound 149 + dnsdist 47 | ~820 MB | technically, with nothing spare |
 | AdGuard Home 1186 (+ front-end) | >1.2 GB | no — into swap |
 
-The Blocky row is the one worth dwelling on. It fits on paper, but leaves no
-room for page cache, which is what makes on-disk lookups fast in the first
-place. AdGuard Home exceeds the box outright.
+The Blocky row is the one worth dwelling on. It fits on paper, with roughly
+170 MB left for the operating system and everything else. The risk is not page
+cache — Blocky serves lookups from its own heap and does not need any — but what
+happens when that margin runs out. Under memory pressure the kernel reclaims
+cache first and then swaps, and swapping a 600 MB *live* heap is the worst case
+available: Go's collector walks the whole live set periodically, so pages that
+get evicted are faulted straight back in on the next cycle.
 
-**Query latency is a wash.** 127–166 µs across the host-networked three. Real
-users see ~39 ms of network round trip, so the filtering step is well under 1%
-of what anyone experiences. It is not a useful axis for choosing between these.
+An on-disk engine degrades more gracefully in the same situation. It loses page
+cache and lookups get slower in proportion to how much was evicted, because
+nothing forces the whole dataset to be touched at once.
+
+AdGuard Home does not reach that argument: at 1186 MB it exceeds the box before
+anything else is running.
+
+**Single-query latency is a wash.** All four answer a blocked query in well
+under a millisecond on loopback. Real users see ~39 ms of network round trip, so
+the filtering step is a fraction of a percent of what anyone experiences. It is
+throughput under load, not single-query latency, that separates these engines.
 
 **Logging defaults dominate throughput, everywhere.** This was the largest
 single effect measured, and it is not architectural — it is configuration:
