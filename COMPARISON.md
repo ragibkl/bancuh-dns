@@ -30,34 +30,47 @@ It comes from the wildcard variants of upstream lists (hagezi and others).
 Same list, same machine, each engine given `1.1.1.1` as upstream so that only
 the filtering is being compared and not the resolver.
 
-| | resident memory | on disk | qps as shipped | qps, logging off | wildcard entries | entries loaded |
-|---|---|---|---|---|---|---|
-| **Pi-hole 6.4.3** | **10 MB** | 259 MB | 6,514 | **54,680** | no | 4.63M |
-| **bancuh-dns** | 41 MB | 165 MB | **40,323** | 40,323 | yes | 7.81M |
-| **AdGuard Home** | 1198 MB | — | 5,619 | 6,660 | no † | 7.81M |
-| **Blocky 0.34** | 608 MB | — | 3,552 | 5,054 | yes | 7.81M |
-| Pi-hole, 3.18M wildcards as regex § | ~11 GB § | 259 MB | — | — | yes | 7.81M |
+| engine | list format given | entries accepted | wildcards work | resident | qps |
+|---|---|---|---|---|---|
+| **bancuh-dns** | `domain` + `*.domain` | 7.81M submitted | **yes** | **41 MB** | **40,323** |
+| **Pi-hole 6.4.3** | hosts | 4,630,065 | no | **10 MB** | **54,680** |
+| **AdGuard Home** (A) | hosts, plain only | 4,632,419 | no | 646 MB | 12,916 |
+| **AdGuard Home** (B) | hosts + `\|\|domain^` | 4.63M + 3,173,671 | **yes** | 1025 MB | 7,574 |
+| **Blocky 0.34** | `domain` + `*.domain` | 6,117,020 | **yes** | 602 MB | 4,758 |
 
-`dnsperf`, 20s, 500 queries outstanding, each engine pinned to **1 vCPU** to
-match the target hardware, and all four on Docker host networking so none pays a
-NAT penalty the others avoid. AdGuard Home had to be given 2 GB to run at all;
-every other engine was capped at 1 GB. Queries were for a blocked domain, so
-this measures the filtering path only — no upstream resolution is involved.
+Every engine was given the same 7,806,090-entry source and each accepted a
+different subset of it, which is as much a part of the result as the memory and
+throughput figures:
 
-"qps as shipped" is each engine at its own defaults. "logging off" disables
-per-query logging and telemetry everywhere. bancuh-dns is identical in both
-columns because it already ships with per-query logging off; the others ship
-with it on.
+- **Pi-hole** rejects `*.domain` outright — 4.63M of 7.81M, and the wildcard
+  coverage is simply absent.
+- **Blocky** accepts `*.domain` natively but rejects 1.7M entries the upstream
+  lists contain that are not valid domains at all (URLs with query strings, and
+  similar), logging each one.
+- **AdGuard Home** cannot act on `*.domain` in a hosts file, but expresses the
+  same intent in its own syntax as `||domain^`. Row B is that conversion, and it
+  works: `x1.y2.doubleclick.net` is blocked from a `||doubleclick.net^` rule.
+- **bancuh-dns** consumes both forms directly, since `*.suffix` is a key in its
+  store rather than a pattern. It does not report an accepted count, so 7.81M is
+  the submitted figure rather than a verified stored one.
 
-† In hosts format, which is what it was given. AdGuard Home's native adblock
-syntax (`||example.com^`) does express wildcards, so this is a limitation of
-the list format used here, not of AdGuard Home.
+Rows A and B for AdGuard Home are the same engine given the same domains in two
+formats. The difference between them — 646 MB and 12,916 qps without wildcard
+coverage, 1025 MB and 7,574 qps with it — is the cost of that coverage in an
+engine that holds rules in memory.
+
+qps is `dnsperf`, 20s, 500 queries outstanding, each engine pinned to **1 vCPU**
+and on Docker host networking, with per-query logging and telemetry disabled
+everywhere (see below for why that matters). Queries were for a blocked domain,
+so this measures the filtering path only, with no upstream resolution involved.
+Every engine was capped at 1 GB except AdGuard Home, which needs more.
 
 ## What the numbers say
 
 **There are two architectures here, not four.** Pi-hole and bancuh-dns keep the
 list on disk and let the OS page cache serve it — 12 MB and 41 MB resident.
-Blocky and AdGuard Home hold it in memory — 624 MB and 1186 MB. At this list
+Blocky and AdGuard Home hold it in memory — 602 MB and 1025 MB at feature
+parity. At this list
 size that is the difference between fitting on a 1 GB host alongside a recursor
 and a TLS front-end, and not fitting.
 
@@ -68,8 +81,8 @@ production node:
 | stack | resident total | fits in 1 GB? |
 |---|---|---|
 | bancuh-dns 41 + unbound 149 + dnsdist 47 | **~240 MB** | yes, comfortably |
-| Blocky 624 + unbound 149 + dnsdist 47 | ~820 MB | technically, with nothing spare |
-| AdGuard Home 1186 (+ front-end) | >1.2 GB | no — into swap |
+| Blocky 602 + unbound 149 + dnsdist 47 | ~800 MB | technically, with nothing spare |
+| AdGuard Home 1025 (+ recursor + front-end) | >1.2 GB | no — into swap |
 
 The Blocky row is the one worth dwelling on. It fits on paper, with roughly
 170 MB left for the operating system and everything else. The risk is not page
@@ -83,8 +96,8 @@ An on-disk engine degrades more gracefully in the same situation. It loses page
 cache and lookups get slower in proportion to how much was evicted, because
 nothing forces the whole dataset to be touched at once.
 
-AdGuard Home does not reach that argument: at 1186 MB it exceeds the box before
-anything else is running.
+AdGuard Home does not reach that argument: at 1025 MB with wildcard coverage it
+leaves nothing for a recursor, and it needed more than 1 GB to start at all.
 
 **Single-query latency is a wash.** All four answer a blocked query in well
 under a millisecond on loopback. Real users see ~39 ms of network round trip, so
@@ -97,7 +110,7 @@ single effect measured, and it is not architectural — it is configuration:
 | engine | as shipped | logging off | cost of default logging |
 |---|---|---|---|
 | Pi-hole | 6,514 | 54,680 | **88%** |
-| Blocky | 3,552 | 5,054 | 30% |
+| Blocky | 3,552 | 4,758–5,054 | ~30% |
 | AdGuard Home | 5,619 | 6,660 | 16% |
 | bancuh-dns (forced to `RUST_LOG=info`) | 23,726 | 40,323 | 41% |
 
@@ -113,10 +126,11 @@ choices rather than the engine underneath.
 
 **The split is by implementation language, not by storage.** With logging
 equalised, the C and Rust engines (Pi-hole, bancuh-dns) reach 40–55k qps on one
-core, while the Go engines (Blocky, AdGuard Home) reach 5–7k — a 6–8x gap.
+core, while the Go engines (Blocky, AdGuard Home) reach 4.7–12.9k. At equal
+wildcard coverage the gap is roughly 5-8x.
 
 Storage location turned out to predict *memory* but not *throughput*. The two
-on-disk engines use 10 MB and 41 MB against 608 MB and 1198 MB for the
+on-disk engines use 10 MB and 41 MB against 602 MB and 1025 MB for the
 in-memory pair, and they are also the two fastest — but the ordering within each
 pair does not follow from where the data lives.
 
@@ -131,12 +145,21 @@ path is a single exact-match lookup where bancuh-dns probes up to one key per
 label across three stores. Part of the gap between 54,680 and 40,323 is the cost
 of wildcard support rather than inefficiency.
 
-**Wildcards split the field.** Only bancuh-dns and Blocky matched
-`x.y.doubleclick.net` from a `*.doubleclick.net` entry. Pi-hole rejects `*`
-entries outright at import, which is the entire 7.81M → 4.71M gap: it silently
-loaded 60% of the list.
+**Wildcards are a matter of format, except for Pi-hole.** Three of the four can
+express them; only Pi-hole cannot.
 
-**§ Pi-hole's regex table is not a substitute** for bulk wildcards. Gravity is
+bancuh-dns and Blocky both consume `*.domain` directly and blocked
+`x1.y2.doubleclick.net` from a `*.doubleclick.net` entry. AdGuard Home cannot
+act on that form in a hosts file, but the same intent written in its own syntax
+as `||doubleclick.net^` works — so its limitation is the list format, not the
+engine, and row B above measures what that costs it.
+
+Pi-hole is the exception. It rejects `*` entries at import, which is the whole
+7.81M → 4.63M gap, and it does so silently: the list loads, the server starts,
+and 3.18M rules are simply absent. Its regex table is the documented alternative,
+and the next section measures why that does not scale to this many.
+
+**Pi-hole's regex table is not a substitute** for bulk wildcards. Gravity is
 an indexed lookup; the regex table is compiled into memory and evaluated
 linearly on every cache-missing query. Both costs scale with the number of
 patterns:
@@ -237,14 +260,19 @@ stays at 41 MB while the 165 MB of data lives on disk and in page cache.
 ## Method and limitations
 
 - One machine, one run per engine. No repetitions, no confidence intervals.
-- Latency measured as wall-clock over a 1,000-query batch through a single
-  `dig` process, so it includes `dig` overhead and loopback. Treat the numbers
-  as comparable to each other, not as absolute per-query cost.
+- Throughput measured with `dnsperf` over 20s with 500 queries outstanding,
+  against a blocked domain so no upstream resolution is involved. Figures vary a
+  few percent between runs on a shared machine; treat them as comparable to each
+  other rather than precise.
 - Memory is `VmRSS` from `/proc` after the list finished loading and the
   process settled.
-- Every engine was given the same hosts/domains list. Engines with a richer
-  native syntax (AdGuard Home especially) would do better with a list written
-  for them.
+- Every engine was given the same source list, but each accepts a different
+  subset of it, and the table reports what each actually loaded. AdGuard Home was
+  additionally tested with the wildcards rewritten into its own syntax, which is
+  row B.
+- Pi-hole and AdGuard Home cache filter downloads on disk. An early AdGuard run
+  reported inflated memory because a stale cached filter was still present; the
+  published figures are from clean state, verified by the downloaded byte count.
 - Versions: Pi-hole 6.4.3, Blocky 0.34.0, AdGuard Home latest as of
   2026-09-05, bancuh-dns `:2`.
 
