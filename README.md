@@ -293,6 +293,13 @@ volumes:
   certs:
 ```
 
+## How it compares
+
+[COMPARISON.md](COMPARISON.md) has measurements of this project against Pi-hole,
+Blocky and AdGuard Home, all running the same 7.8M-entry blocklist on a single
+vCPU: memory, throughput, and which engines can represent wildcard entries at
+all.
+
 ## Related repos
 
 - [adblock-dns-server](https://github.com/ragibkl/adblock-dns-server) — blocklist data and deployment config
