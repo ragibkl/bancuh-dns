@@ -37,10 +37,10 @@ the filtering is being compared and not the resolver.
 | **AdGuard Home** | 1198 MB | — | 5,619 | 6,660 | no † | 7.81M |
 | **Blocky 0.34** | 608 MB | — | 3,552 | 5,054 | yes | 7.81M |
 | Pi-hole, 3.18M wildcards as regex § | ~11 GB § | 259 MB | — | — | yes | 7.81M |
-| Pi-hole, 4.63M plain records as regex § | ~16 GB § | — | — | — | n/a | 4.63M |
 
 `dnsperf`, 20s, 500 queries outstanding, each engine pinned to **1 vCPU** to
-match the target hardware. AdGuard Home had to be given 2 GB to run at all;
+match the target hardware, and all four on Docker host networking so none pays a
+NAT penalty the others avoid. AdGuard Home had to be given 2 GB to run at all;
 every other engine was capped at 1 GB. Queries were for a blocked domain, so
 this measures the filtering path only — no upstream resolution is involved.
 
@@ -48,9 +48,6 @@ this measures the filtering path only — no upstream resolution is involved.
 per-query logging and telemetry everywhere. bancuh-dns is identical in both
 columns because it already ships with per-query logging off; the others ship
 with it on.
-
-\* Pi-hole was run with Docker bridge networking and port mapping; the others
-used host networking, so part of that figure is NAT rather than Pi-hole.
 
 † In hosts format, which is what it was given. AdGuard Home's native adblock
 syntax (`||example.com^`) does express wildcards, so this is a limitation of
