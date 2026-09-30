@@ -102,7 +102,7 @@ and are disabled by default.
 |---|---|
 | `hickory-server` | DNS server — UDP + TCP port 53; DoT 853 and DoH 443 in standalone mode |
 | `AdblockEngine` | Holds the active blocklist DB; swapped atomically on update |
-| `AdblockDB` | Three RocksDB stores: `blacklist`, `whitelist`, `rewrites` |
+| `AdblockDB` | Three RocksDB stores: `blacklist`, `whitelist`, `rewrites`, saved under `DB_DIR` |
 | `Resolver` | Forwards allowed queries to upstream DNS |
 | `unbound` | Local recursive resolver used when no `FORWARDERS` are set. Listens on `127.0.0.1:5353` only, validates DNSSEC against a root anchor primed at image build time |
 | Rate limiter | _Experimental._ Per-IP token bucket (`governor`) — silently drops excess queries. Off unless `RATE_LIMIT_ENABLED` |
@@ -140,12 +140,37 @@ so doing that would make a transient upstream problem sticky.
 On startup and then every `UPDATE_INTERVAL` seconds (default: 86400), the update loop:
 1. Fetches `configuration.yaml` from `CONFIG_URL`
 2. Downloads all configured blacklist/whitelist/rewrite sources
-3. Compiles them into a fresh RocksDB instance
-4. Atomically swaps the new DB into the engine — in-flight queries are unaffected
-5. On failure: logs a warning, keeps the existing DB, retries next interval
+3. Compiles them into a fresh RocksDB instance under `DB_DIR`
+4. Records it as the current blocklist, then atomically swaps it into the engine —
+   in-flight queries are unaffected, and the replaced one is deleted
+5. On failure: logs a warning, keeps the existing DB, retries next interval (after 60 s
+   instead while no blocklist is loaded at all)
 
 The server answers queries throughout, but see [Known limitations](#known-limitations) for
 the query latency caused by the compile step.
+
+### Restarts
+
+The current blocklist is kept in `DB_DIR` across restarts. On startup the server loads
+it and answers straight away, filtered, then compiles a fresh one in the background as
+above. It also removes anything else in `DB_DIR`: a compile interrupted by a crash, or a
+blocklist that was replaced.
+
+If there is no usable saved blocklist — the first start on an empty `DB_DIR`, or one
+written by a version with a different storage format — the server does **not** answer
+until the first compile finishes (about a minute with the default config). Its DNS
+port stays closed, so clients and front ends such as dnsdist treat it as down rather
+than getting unfiltered answers. In standalone mode, DoT, DoH and the ACME setup wait
+for it too. A saved blocklist that fails to load for another reason, such as an I/O
+error, is left on disk rather than deleted.
+
+`DB_DIR` is locked while the server runs; a second instance pointed at the same
+directory exits with an error, so a rollout that starts the new container before
+stopping the old one needs a separate volume per instance. Startup removes only
+entries named like a blocklist generation (`gen-<time>-<id>`), but a dedicated
+directory is still best. The image sets `DB_DIR=/var/lib/bancuh-dns`: mount a
+volume there, or a recreated container starts empty. A saved blocklist takes roughly
+110 MB with the default config, twice that briefly while an update swaps in.
 
 ## Configuration
 
@@ -158,6 +183,7 @@ the query latency caused by the compile step.
 | `FORWARDERS` | _(unset)_ | Comma-separated upstream DNS IPs. If unset, uses the local unbound recursor |
 | `FORWARDERS_PORT` | `53` | Port for upstream forwarders |
 | `UPDATE_INTERVAL` | `86400` | Blocklist refresh interval in seconds |
+| `DB_DIR` | `/var/lib/bancuh-dns` in the image, `bancuh_db` otherwise | Where compiled blocklists are kept across restarts. See [Restarts](#restarts) |
 
 ### Admin / query logs (experimental)
 
@@ -223,9 +249,8 @@ challenge (served on port 80).
   handler, causing intermittent timeouts for the duration of the compile (roughly two to
   three minutes, once per `UPDATE_INTERVAL`). See
   [#9](https://github.com/ragibkl/bancuh-dns/issues/9).
-- **No blocking until the first compile finishes.** After a restart the server answers
-  immediately but with an empty database, so nothing is blocked until the first update
-  completes.
+- **No answers until the first compile finishes on an empty `DB_DIR`.** Restarts with a
+  saved blocklist answer straight away; see [Restarts](#restarts).
 - **Standalone mode:** UDP behind a floating/reserved IP, and DoH GET — see
   [Deployment modes](#standalone-mode-experimental).
 
@@ -258,9 +283,13 @@ services:
       # FORWARDERS: "1.1.1.1,1.0.0.1"
     volumes:
       - ./data:/data
+      - db:/var/lib/bancuh-dns
     ports:
       - 1153:53/tcp
       - 1153:53/udp
+
+volumes:
+  db:
 ```
 
 ### With DoT + DoH (TLS, experimental)
@@ -287,9 +316,11 @@ services:
       TLS_EMAIL: "admin@example.com"
     volumes:
       - ./data:/data
+      - db:/var/lib/bancuh-dns
       - certs:/var/cache/bancuh-dns/certs
 
 volumes:
+  db:
   certs:
 ```
 

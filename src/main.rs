@@ -14,6 +14,7 @@ mod unbound;
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -41,6 +42,10 @@ const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 const TCP_RESPONSE_BUFFER: usize = 32;
 const UNBOUND_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
 const UNBOUND_PORT: u16 = 5353;
+/// How soon to retry a failed update while no blocklist is loaded at all, and the DNS
+/// listeners are therefore still closed. Once one is loaded, failures wait a full
+/// `UPDATE_INTERVAL`.
+const NOT_READY_RETRY: Duration = Duration::from_secs(60);
 
 #[derive(Parser, Debug)]
 #[command(name = "Bancuh DNS")]
@@ -72,6 +77,11 @@ struct Args {
     /// Sets the blocklist update interval in seconds
     #[arg(long, env, value_name = "UPDATE_INTERVAL", default_value = "86400")]
     update_interval: u64,
+
+    /// Directory for compiled blocklists. The current one is kept across restarts, so
+    /// mount it as a volume to serve a filtered answer straight after a restart.
+    #[arg(long, env, value_name = "DB_DIR", default_value = "bancuh_db")]
+    db_dir: PathBuf,
 
     /// Enable DoT (port 853) and DoH (port 443) via ACME/Let's Encrypt
     #[arg(long, env, value_name = "TLS_ENABLED")]
@@ -127,19 +137,14 @@ struct Args {
     rate_limit_ipv6_prefix: u8,
 }
 
-async fn sigint() -> std::io::Result<()> {
-    signal(SignalKind::interrupt())?.recv().await;
-    Ok(())
-}
-
-async fn sigterm() -> std::io::Result<()> {
-    signal(SignalKind::terminate())?.recv().await;
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+
+    // Registered once, up front: a signal is only seen by streams that exist when it
+    // arrives, so streams created later could miss one sent during startup.
+    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sigterm = signal(SignalKind::terminate())?;
 
     let Args {
         config_url,
@@ -147,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
         forwarders,
         forwarders_port,
         update_interval,
+        db_dir,
         tls_enabled,
         tls_email,
         tls_domain,
@@ -168,6 +174,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("forwarders: [{}]", forwarders.iter().join(", "));
     tracing::info!("forwarders_port: {forwarders_port}");
     tracing::info!("update_interval: {update_interval:?}");
+    tracing::info!("db_dir: {}", db_dir.display());
 
     tracing::info!("Validating adblock config. config_url: {config_url}");
     let mut delay = Duration::from_secs(5);
@@ -189,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
     }
     tracing::info!("Validating adblock config. config_url: {config_url}. DONE");
 
-    let engine = Arc::new(AdblockEngine::new(config_url)?);
+    let engine = Arc::new(AdblockEngine::new(config_url, db_dir)?);
 
     let tracker = TaskTracker::new();
     let token = CancellationToken::new();
@@ -200,7 +207,16 @@ async fn main() -> anyhow::Result<()> {
     tracker.spawn(async move {
         loop {
             tracing::info!("engine-update running db update");
-            if let Err(err) = cloned_engine.run_update().await {
+            // A stop signal must not wait for a compile to finish. Dropping the update
+            // mid-compile deletes the partial generation; the saved one is untouched.
+            let res = tokio::select! {
+                res = cloned_engine.run_update() => res,
+                _ = cloned_token.cancelled() => {
+                    tracing::info!("engine-update received cancel signal during update");
+                    return;
+                }
+            };
+            if let Err(err) = res {
                 tracing::warn!(
                     "engine-update running db update. ERROR: {err}. Keeping existing db, will retry next interval."
                 );
@@ -208,9 +224,14 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("engine-update running db update. DONE");
             }
 
-            tracing::info!("engine-update sleeping for {update_interval:?}");
+            let wait = if cloned_engine.is_ready() {
+                update_interval
+            } else {
+                update_interval.min(NOT_READY_RETRY)
+            };
+            tracing::info!("engine-update sleeping for {wait:?}");
             tokio::select! {
-                _ = tokio::time::sleep(update_interval) => {
+                _ = tokio::time::sleep(wait) => {
                     tracing::info!("engine-update waking up");
                 }
                 _ = cloned_token.cancelled() => {
@@ -259,13 +280,35 @@ async fn main() -> anyhow::Result<()> {
         .flatten()
         .map(Arc::new);
     let handler = Handler::new(
-        engine,
+        engine.clone(),
         resolver,
         query_log.clone(),
         rate_limiter,
         rate_limit_ipv4_prefix,
         rate_limit_ipv6_prefix,
     );
+
+    // Answering before a blocklist is loaded would resolve every domain unfiltered. Keep
+    // the listeners closed instead, so clients and front ends see this server as down
+    // and use another. Only the very first start on an empty DB_DIR waits here; later
+    // starts load the generation the previous run saved.
+    if !engine.is_ready() {
+        tracing::info!("Waiting for the first compile before opening DNS listeners");
+        let stop = tokio::select! {
+            _ = engine.wait_ready() => None,
+            _ = sigint.recv() => Some("sigint"),
+            _ = sigterm.recv() => Some("sigterm"),
+            _ = token.cancelled() => Some("a task ending prematurely"),
+        };
+        if let Some(reason) = stop {
+            tracing::info!("Stopping before serving: {reason}");
+            token.cancel();
+            tracker.close();
+            tracker.wait().await;
+            return Ok(());
+        }
+        tracing::info!("Waiting for the first compile before opening DNS listeners. DONE");
+    }
 
     tracing::info!("Starting dns server");
     let mut server = Server::new(handler);
@@ -337,21 +380,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting dns server. DONE");
 
     tokio::select! {
-        res = sigint() => match res {
-            Ok(()) => {
-                tracing::info!("Received sigint signal");
-            }
-            Err(err) => {
-                tracing::info!("Unable to listen for sigint signal: {err}");
-            }
+        _ = sigint.recv() => {
+            tracing::info!("Received sigint signal");
         },
-        res = sigterm() => match res {
-            Ok(()) => {
-                tracing::info!("Received sigterm signal");
-            }
-            Err(err) => {
-                tracing::info!("Unable to listen for sigterm signal: {err}");
-            }
+        _ = sigterm.recv() => {
+            tracing::info!("Received sigterm signal");
         },
         _ = tracker.wait() => {
             tracing::info!("Tasks ended prematurely");

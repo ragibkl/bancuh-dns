@@ -53,6 +53,11 @@ RUN unbound-anchor -a /etc/unbound/root.key || true; \
 # copy binary
 COPY --from=builder /code/bancuh-dns/target/release/bancuh-dns /usr/local/bin/bancuh-dns
 
+# compiled blocklists. The current one is kept here across restarts and loaded at
+# startup, so mount a volume at this path: without one, a recreated container starts
+# empty and does not answer until its first compile finishes.
+ENV DB_DIR=/var/lib/bancuh-dns
+
 # healthcheck - runs inside the container against the internal port
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD dig @127.0.0.1 google.com || exit 1

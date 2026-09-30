@@ -1,12 +1,17 @@
-use std::sync::Arc;
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-use arc_swap::ArcSwap;
+use arc_swap::ArcSwapOption;
 use thiserror::Error;
+use tokio::sync::watch;
 
 use crate::{
     compiler::{AdblockCompiler, CompileError},
     config::{Config, FileOrUrl},
-    db::AdblockDB,
+    db::{AdblockDB, DbDir},
 };
 
 async fn load_definition(db: Arc<AdblockDB>, config_url: &FileOrUrl) -> Result<(), EngineError> {
@@ -32,38 +37,129 @@ pub enum EngineError {
 
     #[error(transparent)]
     Compile(#[from] CompileError),
+
+    #[error("db task failed to complete: {0}")]
+    Join(#[from] tokio::task::JoinError),
+
+    #[error("no blocklist loaded yet")]
+    NotReady,
+}
+
+/// How long to wait for in-flight queries to release a replaced generation, so that it is
+/// closed and deleted here on the blocking pool rather than by whichever query drops it
+/// last. Lookups hold it for microseconds.
+const RETIRE_WAIT: Duration = Duration::from_secs(5);
+
+fn retire(db: Arc<AdblockDB>) {
+    let start = Instant::now();
+    while Arc::strong_count(&db) > 1 && start.elapsed() < RETIRE_WAIT {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    drop(db);
 }
 
 #[derive(Debug)]
 pub struct AdblockEngine {
-    db: Arc<ArcSwap<AdblockDB>>,
+    /// `None` until a blocklist is loaded: either the generation saved by the previous
+    /// run, or the first compile. The server does not answer queries before then.
+    db: ArcSwapOption<AdblockDB>,
+    dir: Arc<DbDir>,
     config_url: FileOrUrl,
+    ready: watch::Sender<bool>,
 }
 
 impl AdblockEngine {
-    pub fn new(config_url: FileOrUrl) -> Result<Self, EngineError> {
-        let db = Arc::new(ArcSwap::from_pointee(AdblockDB::create()?));
+    /// Open the db dir, load the generation saved by the previous run if it is usable,
+    /// and remove everything else in the dir.
+    pub fn new(config_url: FileOrUrl, db_dir: PathBuf) -> Result<Self, EngineError> {
+        tracing::info!("Opening db dir: {}", db_dir.display());
+        let dir = DbDir::open(db_dir)?;
 
-        Ok(Self { db, config_url })
+        let (saved, clean) = match dir.load_current() {
+            Ok(Some(db)) => {
+                let age = db
+                    .compiled_at()
+                    .map(|t| format!("{}s", (chrono::Utc::now() - t).num_seconds()))
+                    .unwrap_or_else(|| "unknown".to_string());
+                tracing::info!("Loaded saved blocklist {} (age {age})", db.name());
+                (Some(db), true)
+            }
+            Ok(None) => {
+                tracing::info!("No saved blocklist; the first compile must finish before serving");
+                (None, true)
+            }
+            Err(err) if err.is_unusable_generation() => {
+                tracing::warn!(
+                    "Saved blocklist is unusable: {err}; the first compile must finish before serving"
+                );
+                (None, true)
+            }
+            Err(err) => {
+                // May be transient, so keep the files: the next start can try again, and
+                // the next commit replaces the pointer anyway.
+                tracing::warn!(
+                    "Loading saved blocklist failed: {err}; keeping it on disk, the first compile must finish before serving"
+                );
+                (None, false)
+            }
+        };
+        if clean {
+            dir.clean(saved.as_ref());
+        }
+
+        let (ready, _) = watch::channel(saved.is_some());
+
+        Ok(Self {
+            db: ArcSwapOption::from(saved.map(Arc::new)),
+            dir: Arc::new(dir),
+            config_url,
+            ready,
+        })
+    }
+
+    /// Whether a blocklist is loaded and queries can be answered.
+    pub fn is_ready(&self) -> bool {
+        *self.ready.borrow()
+    }
+
+    /// Wait until a blocklist is loaded.
+    pub async fn wait_ready(&self) {
+        let mut rx = self.ready.subscribe();
+        // the sender lives as long as self, so this cannot fail
+        let _ = rx.wait_for(|ready| *ready).await;
     }
 
     pub async fn run_update(&self) -> Result<(), EngineError> {
         let config_url = self.config_url.clone();
 
         // instantiate a new_db and load adblock definition into it. A failed write now
-        // propagates, so a partially compiled db is dropped rather than swapped in.
-        let new_db = Arc::new(AdblockDB::create()?);
+        // propagates, and the new generation is deleted when dropped rather than swapped in.
+        let dir = self.dir.clone();
+        let new_db = Arc::new(tokio::task::spawn_blocking(move || dir.new_generation()).await??);
         load_definition(new_db.clone(), &config_url).await?;
 
-        // atomically swap the new_db in place; old_db is dropped here
-        self.db.store(new_db);
+        // make it the generation the next start loads, before serving from it
+        let dir = self.dir.clone();
+        let committed = new_db.clone();
+        tokio::task::spawn_blocking(move || dir.commit(&committed)).await??;
+
+        // atomically swap the new_db in place, then delete the old generation off the
+        // async runtime: closing it waits for RocksDB background work and removes ~100 MB
+        if let Some(old_db) = self.db.swap(Some(new_db)) {
+            old_db.set_discard();
+            self.ready.send_replace(true);
+            tokio::task::spawn_blocking(move || retire(old_db)).await?;
+        } else {
+            self.ready.send_replace(true);
+        }
 
         Ok(())
     }
 
     pub async fn get_redirect(&self, name: &str) -> Result<Option<String>, EngineError> {
         let db_guard = self.db.load();
-        let alias = db_guard.rewrites.get(name)?;
+        let db = db_guard.as_ref().ok_or(EngineError::NotReady)?;
+        let alias = db.rewrites.get(name)?;
 
         if let Some(alias) = alias.as_deref() {
             tracing::debug!("rewrite: {name} to: {alias}");
@@ -74,13 +170,14 @@ impl AdblockEngine {
 
     pub async fn is_blocked(&self, name: &str) -> Result<bool, EngineError> {
         let db_guard = self.db.load();
+        let db = db_guard.as_ref().ok_or(EngineError::NotReady)?;
 
-        if db_guard.whitelist.contains(name)? {
+        if db.whitelist.contains(name)? {
             tracing::debug!("whitelist: {name}");
             return Ok(false);
         }
 
-        if db_guard.blacklist.contains(name)? {
+        if db.blacklist.contains(name)? {
             tracing::debug!("blacklist: {name}");
             return Ok(true);
         }
