@@ -17,6 +17,7 @@ services:
       # ACME_INSECURE: "true"
     volumes:
       - ./data:/data
+      - db:/var/lib/bancuh-dns
     ports:
       - 1153:53/tcp
       - 1153:53/udp
@@ -31,3 +32,6 @@ services:
       PEBBLE_VA_NOSLEEP: "1"
     ports:
       - 14000:14000
+
+volumes:
+  db:
