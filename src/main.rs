@@ -137,19 +137,14 @@ struct Args {
     rate_limit_ipv6_prefix: u8,
 }
 
-async fn sigint() -> std::io::Result<()> {
-    signal(SignalKind::interrupt())?.recv().await;
-    Ok(())
-}
-
-async fn sigterm() -> std::io::Result<()> {
-    signal(SignalKind::terminate())?.recv().await;
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+
+    // Registered once, up front: a signal is only seen by streams that exist when it
+    // arrives, so streams created later could miss one sent during startup.
+    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sigterm = signal(SignalKind::terminate())?;
 
     let Args {
         config_url,
@@ -301,15 +296,12 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Waiting for the first compile before opening DNS listeners");
         let stop = tokio::select! {
             _ = engine.wait_ready() => None,
-            res = sigint() => Some(res.map(|()| "sigint")),
-            res = sigterm() => Some(res.map(|()| "sigterm")),
-            _ = token.cancelled() => Some(Ok("a task ending prematurely")),
+            _ = sigint.recv() => Some("sigint"),
+            _ = sigterm.recv() => Some("sigterm"),
+            _ = token.cancelled() => Some("a task ending prematurely"),
         };
         if let Some(reason) = stop {
-            match reason {
-                Ok(reason) => tracing::info!("Stopping before serving: {reason}"),
-                Err(err) => tracing::info!("Unable to listen for stop signals: {err}"),
-            }
+            tracing::info!("Stopping before serving: {reason}");
             token.cancel();
             tracker.close();
             tracker.wait().await;
@@ -388,21 +380,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting dns server. DONE");
 
     tokio::select! {
-        res = sigint() => match res {
-            Ok(()) => {
-                tracing::info!("Received sigint signal");
-            }
-            Err(err) => {
-                tracing::info!("Unable to listen for sigint signal: {err}");
-            }
+        _ = sigint.recv() => {
+            tracing::info!("Received sigint signal");
         },
-        res = sigterm() => match res {
-            Ok(()) => {
-                tracing::info!("Received sigterm signal");
-            }
-            Err(err) => {
-                tracing::info!("Unable to listen for sigterm signal: {err}");
-            }
+        _ = sigterm.recv() => {
+            tracing::info!("Received sigterm signal");
         },
         _ = tracker.wait() => {
             tracing::info!("Tasks ended prematurely");

@@ -143,7 +143,8 @@ On startup and then every `UPDATE_INTERVAL` seconds (default: 86400), the update
 3. Compiles them into a fresh RocksDB instance under `DB_DIR`
 4. Records it as the current blocklist, then atomically swaps it into the engine —
    in-flight queries are unaffected, and the replaced one is deleted
-5. On failure: logs a warning, keeps the existing DB, retries next interval
+5. On failure: logs a warning, keeps the existing DB, retries next interval (after 60 s
+   instead while no blocklist is loaded at all)
 
 The server answers queries throughout, but see [Known limitations](#known-limitations) for
 the query latency caused by the compile step.
@@ -159,10 +160,15 @@ If there is no usable saved blocklist — the first start on an empty `DB_DIR`, 
 written by a version with a different storage format — the server does **not** answer
 until the first compile finishes (about a minute with the default config). Its DNS
 port stays closed, so clients and front ends such as dnsdist treat it as down rather
-than getting unfiltered answers.
+than getting unfiltered answers. In standalone mode, DoT, DoH and the ACME setup wait
+for it too. A saved blocklist that fails to load for another reason, such as an I/O
+error, is left on disk rather than deleted.
 
 `DB_DIR` is locked while the server runs; a second instance pointed at the same
-directory exits with an error. The image sets `DB_DIR=/var/lib/bancuh-dns`: mount a
+directory exits with an error, so a rollout that starts the new container before
+stopping the old one needs a separate volume per instance. Startup removes only
+entries named like a blocklist generation (`gen-<time>-<id>`), but a dedicated
+directory is still best. The image sets `DB_DIR=/var/lib/bancuh-dns`: mount a
 volume there, or a recreated container starts empty. A saved blocklist takes roughly
 110 MB with the default config, twice that briefly while an update swaps in.
 

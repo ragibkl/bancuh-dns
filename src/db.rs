@@ -26,13 +26,12 @@ const CURRENT_FILE: &str = "current";
 const CURRENT_TMP_FILE: &str = "current.tmp";
 const LOCK_FILE: &str = "lock";
 const GENERATION_PREFIX: &str = "gen-";
-/// Directories from builds before generations were kept across restarts.
-const LEGACY_PREFIX: &str = "db-";
+const GENERATION_ID_LEN: usize = 10;
 
 fn rand_string() -> String {
     rand::rng()
         .sample_iter(Alphanumeric)
-        .take(10)
+        .take(GENERATION_ID_LEN)
         .map(char::from)
         .collect()
 }
@@ -43,6 +42,28 @@ fn generation_name() -> String {
         chrono::Utc::now().timestamp(),
         rand_string()
     )
+}
+
+/// Whether `name` is exactly what [`generation_name`] produces: `gen-<unix time>-<id>`.
+/// Startup cleanup deletes only entries matching this, so a DB_DIR shared with anything
+/// else loses nothing but its generations.
+fn is_generation_name(name: &str) -> bool {
+    let Some((ts, id)) = name
+        .strip_prefix(GENERATION_PREFIX)
+        .and_then(|rest| rest.split_once('-'))
+    else {
+        return false;
+    };
+
+    !ts.is_empty()
+        && ts.bytes().all(|b| b.is_ascii_digit())
+        && id.len() == GENERATION_ID_LEN
+        && id.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// fsync a directory, so the entries created or renamed in it survive a power loss.
+fn sync_dir(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
 }
 
 fn normalize_name(name: &str) -> String {
@@ -72,6 +93,20 @@ pub enum DBError {
 
     #[error("saved generation has format version {0}, expected {FORMAT_VERSION}")]
     FormatVersion(u32),
+
+    #[error("saved generation {0} does not exist")]
+    MissingGeneration(String),
+}
+
+impl DBError {
+    /// Whether the saved generation is certainly unusable, as opposed to failing to load
+    /// for a reason that may pass, such as an I/O error. Only then may startup delete it.
+    pub fn is_unusable_generation(&self) -> bool {
+        matches!(
+            self,
+            Self::BadPointer(_) | Self::FormatVersion(_) | Self::MissingGeneration(_)
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -86,11 +121,10 @@ impl DomainStore {
         Ok(Self { db: Some(db) })
     }
 
-    /// Open a store that must already exist.
-    fn open(path: &Path) -> Result<Self, DBError> {
-        let mut opts = Options::default();
-        opts.create_if_missing(false);
-        let db = DB::open(&opts, path)?;
+    /// Open a committed store read-only: it is never written again, and opening it
+    /// read-write would add files to it and could start compactions while serving.
+    fn open_read_only(path: &Path) -> Result<Self, DBError> {
+        let db = DB::open_for_read_only(&Options::default(), path, false)?;
 
         Ok(Self { db: Some(db) })
     }
@@ -206,22 +240,35 @@ pub struct AdblockDB {
 
 impl AdblockDB {
     fn create(dir: PathBuf) -> Result<Self, DBError> {
-        let db = Self {
-            blacklist: DomainStore::create(&dir.join("blacklist"))?,
-            whitelist: DomainStore::create(&dir.join("whitelist"))?,
-            rewrites: DomainStore::create(&dir.join("rewrites"))?,
-            dir,
-            discard: AtomicBool::new(true),
-        };
+        let stores = (|| {
+            Ok::<_, DBError>((
+                DomainStore::create(&dir.join("blacklist"))?,
+                DomainStore::create(&dir.join("whitelist"))?,
+                DomainStore::create(&dir.join("rewrites"))?,
+            ))
+        })();
 
-        Ok(db)
+        match stores {
+            Ok((blacklist, whitelist, rewrites)) => Ok(Self {
+                blacklist,
+                whitelist,
+                rewrites,
+                dir,
+                discard: AtomicBool::new(true),
+            }),
+            Err(err) => {
+                // No AdblockDB exists to delete the directory on drop, so do it here.
+                let _ = fs::remove_dir_all(&dir);
+                Err(err)
+            }
+        }
     }
 
     fn open(dir: PathBuf) -> Result<Self, DBError> {
         let db = Self {
-            blacklist: DomainStore::open(&dir.join("blacklist"))?,
-            whitelist: DomainStore::open(&dir.join("whitelist"))?,
-            rewrites: DomainStore::open(&dir.join("rewrites"))?,
+            blacklist: DomainStore::open_read_only(&dir.join("blacklist"))?,
+            whitelist: DomainStore::open_read_only(&dir.join("whitelist"))?,
+            rewrites: DomainStore::open_read_only(&dir.join("rewrites"))?,
             dir,
             discard: AtomicBool::new(false),
         };
@@ -305,7 +352,11 @@ impl DbDir {
             .truncate(false)
             .write(true)
             .open(root.join(LOCK_FILE))?;
-        lock.try_lock().map_err(|_| DBError::Locked(root.clone()))?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => return Err(DBError::Locked(root)),
+            Err(fs::TryLockError::Error(err)) => return Err(err.into()),
+        }
 
         Ok(Self { root, _lock: lock })
     }
@@ -328,35 +379,55 @@ impl DbDir {
         if version != FORMAT_VERSION {
             return Err(DBError::FormatVersion(version));
         }
-        if !name.starts_with(GENERATION_PREFIX) || name.contains('/') {
+        if !is_generation_name(name) {
             return Err(DBError::BadPointer(pointer.clone()));
         }
 
-        AdblockDB::open(self.root.join(name)).map(Some)
+        // Checked here because RocksDB creates a missing path even when asked only to open.
+        let dir = self.root.join(name);
+        if !dir.is_dir() {
+            return Err(DBError::MissingGeneration(name.to_string()));
+        }
+
+        AdblockDB::open(dir).map(Some)
     }
 
-    /// Remove every generation except `keep`, and any leftovers from older builds or an
-    /// interrupted commit. Without a generation to keep, `current` goes too.
-    pub fn clean(&self, keep: Option<&AdblockDB>) -> Result<(), DBError> {
+    /// Remove every generation except `keep`, and a pointer left by an interrupted
+    /// commit. Without a generation to keep, `current` goes too.
+    ///
+    /// Best effort: whatever cannot be removed is logged and left for the next start, so
+    /// a stray entry never stops the server from starting.
+    pub fn clean(&self, keep: Option<&AdblockDB>) {
         let keep = keep.map(|db| db.name());
+        let mut files = vec![CURRENT_TMP_FILE];
         if keep.is_none() {
-            remove_file_if_exists(&self.root.join(CURRENT_FILE))?;
+            files.push(CURRENT_FILE);
         }
-        remove_file_if_exists(&self.root.join(CURRENT_TMP_FILE))?;
+        for file in files {
+            if let Err(err) = remove_file_if_exists(&self.root.join(file)) {
+                tracing::warn!("Removing {file} failed: {err}");
+            }
+        }
 
-        for entry in fs::read_dir(&self.root)? {
-            let entry = entry?;
+        let entries = match fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(err) => {
+                tracing::warn!("Listing {} failed: {err}", self.root.display());
+                return;
+            }
+        };
+        for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            let stale = name.starts_with(GENERATION_PREFIX) || name.starts_with(LEGACY_PREFIX);
-            if !stale || keep.as_deref() == Some(name.as_str()) {
+            let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+            if !is_dir || !is_generation_name(&name) || keep.as_deref() == Some(name.as_str()) {
                 continue;
             }
 
             tracing::info!("Removing stale db: {name}");
-            fs::remove_dir_all(entry.path())?;
+            if let Err(err) = fs::remove_dir_all(entry.path()) {
+                tracing::warn!("Removing stale db: {name} failed: {err}");
+            }
         }
-
-        Ok(())
     }
 
     /// Create an empty generation to compile into. It is deleted when dropped unless it
@@ -368,8 +439,13 @@ impl DbDir {
     /// Flush `db` and make it the generation loaded on the next start.
     ///
     /// Synchronous: call this from a blocking context.
+    ///
+    /// On error the caller must not swap `db` in, nor delete the generation it would
+    /// replace: the pointer may name either one after a power loss.
     pub fn commit(&self, db: &AdblockDB) -> Result<(), DBError> {
         db.flush()?;
+        // RocksDB syncs its own files; this syncs the generation's store directories.
+        sync_dir(&db.dir)?;
 
         let tmp = self.root.join(CURRENT_TMP_FILE);
         let mut file = File::create(&tmp)?;
@@ -382,11 +458,9 @@ impl DbDir {
         // if the directory sync below fails.
         db.discard.store(false, Ordering::SeqCst);
 
-        // Persist the rename itself. Without this a power loss could bring back the old
-        // pointer, which is harmless: that generation is only deleted once replaced.
-        if let Err(err) = File::open(&self.root).and_then(|d| d.sync_all()) {
-            tracing::warn!("Syncing db dir after commit failed: {err}");
-        }
+        // Persist the rename. If this fails, a power loss could bring back the old
+        // pointer, so the error stops the caller from deleting the old generation.
+        sync_dir(&self.root)?;
 
         Ok(())
     }
@@ -485,24 +559,70 @@ mod tests {
         let current = compile(&dir, &["a.example"]);
         dir.commit(&current).unwrap();
 
-        // leftovers: an interrupted compile, an older build's db and a half-written pointer
+        // leftovers: an interrupted compile and a half-written pointer
         let partial = compile(&dir, &["b.example"]);
         let partial_name = partial.name();
         std::mem::forget(partial);
-        fs::create_dir_all(root.join("db-legacy01")).unwrap();
         fs::write(root.join(CURRENT_TMP_FILE), "garbage").unwrap();
         fs::write(root.join("unrelated"), "kept").unwrap();
         assert!(generations(&root).contains(&partial_name));
 
-        dir.clean(Some(&current)).unwrap();
+        dir.clean(Some(&current));
 
         assert_eq!(generations(&root), vec![current.name()]);
-        assert!(!root.join("db-legacy01").exists());
         assert!(!root.join(CURRENT_TMP_FILE).exists());
         assert!(root.join(CURRENT_FILE).exists());
         assert!(root.join("unrelated").exists());
         drop(current);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn clean_leaves_anything_that_is_not_a_generation() {
+        let root = temp_root();
+        let dir = DbDir::open(&root).unwrap();
+        let current = compile(&dir, &["a.example"]);
+        dir.commit(&current).unwrap();
+
+        // look like generations but are files, or are not named exactly like one
+        fs::write(root.join("gen-1-abcdefghij"), "a file").unwrap();
+        fs::write(root.join("db-backup.sql"), "a file").unwrap();
+        fs::create_dir_all(root.join("db-AbCdEfGhIj")).unwrap();
+        fs::create_dir_all(root.join("gen-backup")).unwrap();
+        fs::create_dir_all(root.join("gen-1-short")).unwrap();
+
+        dir.clean(Some(&current));
+
+        for kept in [
+            "gen-1-abcdefghij",
+            "db-backup.sql",
+            "db-AbCdEfGhIj",
+            "gen-backup",
+            "gen-1-short",
+        ] {
+            assert!(root.join(kept).exists(), "{kept} was removed");
+        }
+        assert!(dir.load_current().unwrap().is_some());
+        drop(current);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn generation_names() {
+        assert!(is_generation_name(&generation_name()));
+        assert!(is_generation_name("gen-1790000000-AbCdEfGhIj"));
+        for name in [
+            "gen-",
+            "gen-1790000000",
+            "gen-1790000000-",
+            "gen-x790000000-AbCdEfGhIj",
+            "gen-1790000000-AbCdEfGhI",
+            "gen-1790000000-AbCdEfGh/j",
+            "gen-1790000000-AbCdEfGhIjK",
+            "db-AbCdEfGhIj",
+        ] {
+            assert!(!is_generation_name(name), "{name}");
+        }
     }
 
     #[test]
@@ -513,7 +633,7 @@ mod tests {
         dir.commit(&db).unwrap();
         std::mem::forget(db);
 
-        dir.clean(None).unwrap();
+        dir.clean(None);
 
         assert!(generations(&root).is_empty());
         assert!(dir.load_current().unwrap().is_none());
@@ -525,10 +645,15 @@ mod tests {
         let root = temp_root();
         let dir = DbDir::open(&root).unwrap();
 
-        fs::write(root.join(CURRENT_FILE), "1 gen-1-missing\n").unwrap();
-        assert!(dir.load_current().is_err());
+        fs::write(root.join(CURRENT_FILE), "1 gen-1-AbCdEfGhIj\n").unwrap();
+        assert!(matches!(
+            dir.load_current(),
+            Err(DBError::MissingGeneration(_))
+        ));
+        // RocksDB must not have been left to create it
+        assert!(!root.join("gen-1-AbCdEfGhIj").exists());
 
-        fs::write(root.join(CURRENT_FILE), "99 gen-1-missing\n").unwrap();
+        fs::write(root.join(CURRENT_FILE), "99 gen-1-AbCdEfGhIj\n").unwrap();
         assert!(matches!(
             dir.load_current(),
             Err(DBError::FormatVersion(99))

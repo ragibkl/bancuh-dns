@@ -1,4 +1,8 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use arc_swap::ArcSwapOption;
 use thiserror::Error;
@@ -41,6 +45,19 @@ pub enum EngineError {
     NotReady,
 }
 
+/// How long to wait for in-flight queries to release a replaced generation, so that it is
+/// closed and deleted here on the blocking pool rather than by whichever query drops it
+/// last. Lookups hold it for microseconds.
+const RETIRE_WAIT: Duration = Duration::from_secs(5);
+
+fn retire(db: Arc<AdblockDB>) {
+    let start = Instant::now();
+    while Arc::strong_count(&db) > 1 && start.elapsed() < RETIRE_WAIT {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    drop(db);
+}
+
 #[derive(Debug)]
 pub struct AdblockEngine {
     /// `None` until a blocklist is loaded: either the generation saved by the previous
@@ -58,27 +75,37 @@ impl AdblockEngine {
         tracing::info!("Opening db dir: {}", db_dir.display());
         let dir = DbDir::open(db_dir)?;
 
-        let saved = match dir.load_current() {
+        let (saved, clean) = match dir.load_current() {
             Ok(Some(db)) => {
                 let age = db
                     .compiled_at()
                     .map(|t| format!("{}s", (chrono::Utc::now() - t).num_seconds()))
                     .unwrap_or_else(|| "unknown".to_string());
                 tracing::info!("Loaded saved blocklist {} (age {age})", db.name());
-                Some(db)
+                (Some(db), true)
             }
             Ok(None) => {
                 tracing::info!("No saved blocklist; the first compile must finish before serving");
-                None
+                (None, true)
             }
-            Err(err) => {
+            Err(err) if err.is_unusable_generation() => {
                 tracing::warn!(
                     "Saved blocklist is unusable: {err}; the first compile must finish before serving"
                 );
-                None
+                (None, true)
+            }
+            Err(err) => {
+                // May be transient, so keep the files: the next start can try again, and
+                // the next commit replaces the pointer anyway.
+                tracing::warn!(
+                    "Loading saved blocklist failed: {err}; keeping it on disk, the first compile must finish before serving"
+                );
+                (None, false)
             }
         };
-        dir.clean(saved.as_ref())?;
+        if clean {
+            dir.clean(saved.as_ref());
+        }
 
         let (ready, _) = watch::channel(saved.is_some());
 
@@ -116,12 +143,15 @@ impl AdblockEngine {
         let committed = new_db.clone();
         tokio::task::spawn_blocking(move || dir.commit(&committed)).await??;
 
-        // atomically swap the new_db in place; the old generation is deleted from disk
-        // once the last in-flight query drops it
+        // atomically swap the new_db in place, then delete the old generation off the
+        // async runtime: closing it waits for RocksDB background work and removes ~100 MB
         if let Some(old_db) = self.db.swap(Some(new_db)) {
             old_db.set_discard();
+            self.ready.send_replace(true);
+            tokio::task::spawn_blocking(move || retire(old_db)).await?;
+        } else {
+            self.ready.send_replace(true);
         }
-        self.ready.send_replace(true);
 
         Ok(())
     }
