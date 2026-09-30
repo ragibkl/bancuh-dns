@@ -146,8 +146,9 @@ On startup and then every `UPDATE_INTERVAL` seconds (default: 86400), the update
 5. On failure: logs a warning, keeps the existing DB, retries next interval (after 60 s
    instead while no blocklist is loaded at all)
 
-The server answers queries throughout, but see [Known limitations](#known-limitations) for
-the query latency caused by the compile step.
+The server answers queries normally throughout: the compile writes to RocksDB in batches
+on the blocking thread pool, so it does not hold up the DNS handler even on a single-core
+host ([#9](https://github.com/ragibkl/bancuh-dns/issues/9)).
 
 ### Restarts
 
@@ -244,11 +245,6 @@ challenge (served on port 80).
 
 ## Known limitations
 
-- **Query latency during blocklist compile.** The compile writes every domain to RocksDB
-  on the async runtime without yielding. On a single-core host this starves the DNS
-  handler, causing intermittent timeouts for the duration of the compile (roughly two to
-  three minutes, once per `UPDATE_INTERVAL`). See
-  [#9](https://github.com/ragibkl/bancuh-dns/issues/9).
 - **No answers until the first compile finishes on an empty `DB_DIR`.** Restarts with a
   saved blocklist answer straight away; see [Restarts](#restarts).
 - **Standalone mode:** UDP behind a floating/reserved IP, and DoH GET — see
