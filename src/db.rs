@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use rand::{Rng, distr::Alphanumeric};
+use rand::{RngExt, distr::Alphanumeric};
 use rocksdb::{DBWithThreadMode, MultiThreaded, Options, WriteBatch};
 use thiserror::Error;
 

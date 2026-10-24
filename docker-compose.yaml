@@ -24,7 +24,7 @@ services:
       - 8080:8080/tcp
 
   pebble:
-    image: ghcr.io/letsencrypt/pebble:2.8.0
+    image: ghcr.io/letsencrypt/pebble:2.10.1
     command: ["-config", "/pebble-config.json"]
     volumes:
       - ./pebble-config.json:/pebble-config.json:ro
