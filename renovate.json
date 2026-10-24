@@ -1,4 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>ragibkl/renovate-config:manual"]
+  "extends": ["github>ragibkl/renovate-config:manual"],
+  "packageRules": [
+    {
+      "description": "Hold rocksdb at 0.24: librocksdb-sys 0.19 (rocksdb 0.25) defines HAVE_UINT128_EXTENSION for every non-MSVC target, which breaks the linux/386 and linux/arm/v7 images. Lift once https://github.com/rust-rocksdb/rust-rocksdb/issues/1103 is fixed.",
+      "matchPackageNames": ["rocksdb"],
+      "allowedVersions": "<0.25"
+    }
+  ]
 }
