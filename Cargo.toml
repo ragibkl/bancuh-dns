@@ -15,21 +15,21 @@ axum = "0.8"
 axum-server = { version = "0.8", features = ["tls-rustls"] }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
-governor = "0.8"
+governor = "0.10"
 hickory-resolver = "0.26"
 hickory-server = { version = "0.26", features = ["https-aws-lc-rs"] }
 rustls = "0.23"
 rustls-acme = { version = "0.15", features = ["tokio", "tower"] }
 idna = "1.1"
-itertools = "0.14"
+itertools = "0.15"
 lazy_static = "1.4.0"
-rand = "0.9"
+rand = "0.10"
 regex = "1.10.2"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
-rocksdb = "0.24.0"
+rocksdb = "0.25.0"
 serde = { version ="1.0", features = ["derive"] }
 serde_json = "1"
-socket2 = { version = "0.5", features = ["all"] }
+socket2 = { version = "0.6", features = ["all"] }
 serde_yaml = "0.9.27"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
