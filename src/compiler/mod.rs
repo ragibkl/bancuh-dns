@@ -71,8 +71,11 @@ impl AdblockCompiler {
             let cnames = rw.load_rewrites().await;
             let db = db.clone();
             tokio::task::spawn_blocking(move || {
-                db.rewrites
-                    .put_aliases_all(cnames.iter().map(|c| (c.domain.0.as_str(), c.alias.0.as_str())))
+                db.rewrites.put_aliases_all(
+                    cnames
+                        .iter()
+                        .map(|c| (c.domain.0.as_str(), c.alias.0.as_str())),
+                )
             })
             .await??;
         }
