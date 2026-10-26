@@ -7,7 +7,46 @@ on:
     branches: ["master"]
 
 jobs:
+  # Everything here must pass before an image is built, so a broken commit on
+  # master never reaches the `2` tag the DNS nodes pull.
+  check:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Use the same Rust version as .tool-versions, so local checks and CI agree.
+      - name: Read Rust version
+        id: rust
+        run: echo "version=$(awk '$1 == "rust" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
+          components: rustfmt, clippy
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: Security advisories
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
+      # rocksdb's C++ build is the slow part; cache it between runs.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked
+
   build:
+    needs: check
     runs-on: ubuntu-latest
 
     # Permissions to use OIDC token authentication

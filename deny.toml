@@ -1,0 +1,11 @@
+# cargo-deny configuration. CI runs `cargo deny check advisories` on every
+# change and once a day, so a new RustSec advisory against a crate in
+# Cargo.lock fails the build.
+
+[advisories]
+ignore = [
+    # unsafe-libyaml is archived and has no maintained release. It comes in
+    # through serde_yaml (also deprecated), which only parses the local
+    # configuration file. Remove once serde_yaml is replaced.
+    { id = "RUSTSEC-2024-0449", reason = "unmaintained, no fix; only parses our own config file" },
+]
