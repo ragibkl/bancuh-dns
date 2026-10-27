@@ -7,8 +7,8 @@ on:
     branches: ["master"]
 
 jobs:
-  # Everything here must pass before an image is built, so a broken commit on
-  # master never reaches the `2` tag the DNS nodes pull.
+  # check, then smoke, must pass before the images are pushed, so a broken
+  # commit on master never reaches the `2` tag the DNS nodes pull.
   check:
     runs-on: ubuntu-latest
 
@@ -45,8 +45,35 @@ jobs:
       - name: cargo test
         run: cargo test --locked
 
-  build:
+  # Build the amd64 image without pushing it, start it with the tiny config in
+  # tests/smoke and check real DNS answers.
+  smoke:
     needs: check
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # depot authenticates with an OIDC token
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: depot/setup-action@v1
+
+      - uses: depot/build-push-action@v1
+        with:
+          context: .
+          platforms: linux/amd64
+          project: 83rwjkn7g4
+          load: true
+          tags: bancuh-dns:smoke
+
+      - name: Smoke test
+        run: tests/smoke/run.sh bancuh-dns:smoke
+
+  build:
+    needs: smoke
     runs-on: ubuntu-latest
 
     # Permissions to use OIDC token authentication

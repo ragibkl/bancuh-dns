@@ -1,0 +1,3 @@
+# domains format; example.net is also whitelisted, so it must still resolve
+blocked.example.org
+example.net
