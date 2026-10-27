@@ -1,0 +1,16 @@
+# Tiny configuration for the CI smoke test (tests/smoke/run.sh): one source of
+# each kind, all local files, so the image starts in seconds without fetching
+# the real blocklists.
+blacklist:
+  - format: hosts
+    path: ./blacklist.hosts
+  - format: domains
+    path: ./blacklist.txt
+
+whitelist:
+  - format: domains
+    path: ./whitelist.txt
+
+overrides:
+  - format: cname
+    path: ./overrides.zone
