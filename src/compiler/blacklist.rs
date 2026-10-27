@@ -37,7 +37,7 @@ impl BlacklistCompiler {
         let source = match self.source.to_fetch().fetch().await {
             Ok(s) => s,
             Err(err) => {
-                println!("Could not fetch from {:?}", &self.source);
+                println!("Could not fetch from {:?}", self.source);
                 println!("{}", err);
                 println!("Skipping");
                 return Vec::new();
