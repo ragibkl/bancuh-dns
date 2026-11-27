@@ -79,7 +79,7 @@ impl AdblockEngine {
             Ok(Some(db)) => {
                 let age = db
                     .compiled_at()
-                    .map(|t| format!("{}s", (chrono::Utc::now() - t).num_seconds()))
+                    .map(|t| format!("{}s", t.duration_until(jiff::Timestamp::now()).as_secs()))
                     .unwrap_or_else(|| "unknown".to_string());
                 tracing::info!("Loaded saved blocklist {} (age {age})", db.name());
                 (Some(db), true)
