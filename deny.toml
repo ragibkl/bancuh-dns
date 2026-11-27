@@ -8,4 +8,8 @@ ignore = [
     # through serde_yaml (also deprecated), which only parses the local
     # configuration file. Remove once serde_yaml is replaced.
     { id = "RUSTSEC-2024-0449", reason = "unmaintained, no fix; only parses our own config file" },
+    # chrono is unmaintained (chronotope/chrono#1768). Our own code uses jiff;
+    # chrono only remains through rustls-acme 0.15.4 (latest), for certificate
+    # validity times. Remove once rustls-acme drops it.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained, no fix; only via rustls-acme, our code uses jiff" },
 ]

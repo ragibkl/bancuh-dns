@@ -39,7 +39,7 @@ fn rand_string() -> String {
 fn generation_name() -> String {
     format!(
         "{GENERATION_PREFIX}{}-{}",
-        chrono::Utc::now().timestamp(),
+        jiff::Timestamp::now().as_second(),
         rand_string()
     )
 }
@@ -293,10 +293,10 @@ impl AdblockDB {
     }
 
     /// When this generation was compiled, from the timestamp in its name.
-    pub fn compiled_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn compiled_at(&self) -> Option<jiff::Timestamp> {
         let name = self.name();
         let ts = name.strip_prefix(GENERATION_PREFIX)?.split('-').next()?;
-        chrono::DateTime::from_timestamp(ts.parse().ok()?, 0)
+        jiff::Timestamp::from_second(ts.parse().ok()?).ok()
     }
 
     /// Delete this generation from disk once the last reference to it is dropped.

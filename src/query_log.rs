@@ -5,14 +5,14 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 const MAX_AGE: Duration = Duration::from_secs(600); // 10 minutes
 const MAX_PER_IP: usize = 1000;
 
 #[derive(serde::Serialize, Debug, Clone)]
 pub struct QueryLog {
-    pub query_time: DateTime<Utc>,
+    pub query_time: Timestamp,
     pub question: String,
     pub answer: String,
 }
@@ -32,7 +32,7 @@ impl QueryLogStore {
         let entries = store.entry(ip).or_default();
 
         // Evict expired entries
-        let cutoff = Utc::now() - MAX_AGE;
+        let cutoff = Timestamp::now() - MAX_AGE;
         while entries.front().is_some_and(|e| e.query_time < cutoff) {
             entries.pop_front();
         }
@@ -47,7 +47,7 @@ impl QueryLogStore {
 
     pub fn get_logs(&self, ip: &IpAddr) -> Vec<QueryLog> {
         let store = self.logs.lock().unwrap();
-        let cutoff = Utc::now() - MAX_AGE;
+        let cutoff = Timestamp::now() - MAX_AGE;
 
         store
             .get(ip)
@@ -63,7 +63,7 @@ impl QueryLogStore {
 
     pub fn active_ips(&self) -> usize {
         let store = self.logs.lock().unwrap();
-        let cutoff = Utc::now() - MAX_AGE;
+        let cutoff = Timestamp::now() - MAX_AGE;
 
         store
             .values()

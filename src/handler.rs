@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use chrono::Utc;
+use jiff::Timestamp;
 
 use hickory_resolver::{
     net::NetError,
@@ -294,7 +294,7 @@ impl RequestHandler for Handler {
             query_log.insert(
                 src_ip,
                 QueryLog {
-                    query_time: Utc::now(),
+                    query_time: Timestamp::now(),
                     question,
                     answer,
                 },

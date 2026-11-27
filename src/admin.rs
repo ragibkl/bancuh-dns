@@ -56,7 +56,7 @@ async fn get_logs_html(
     for q in &queries {
         rows.push_str(&format!(
             "<tr><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-            q.query_time.format("%Y-%m-%d %H:%M:%S"),
+            q.query_time.strftime("%Y-%m-%d %H:%M:%S"),
             html_escape(&q.question),
             html_escape(&q.answer),
         ));
