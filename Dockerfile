@@ -1,16 +1,21 @@
 ## builder
-FROM alpine:3.24 AS builder
+# Keep the Rust version in step with .tool-versions (CI checks they match).
+FROM rust:1.100.0-alpine3.24 AS builder
 
 WORKDIR /code/bancuh-dns
 
+# Link musl dynamically, as Alpine's own rust package does. The official image
+# defaults to static binaries, and a static build script cannot dlopen the
+# libclang that bindgen (librocksdb-sys) needs. The runtime stage already
+# installs libgcc and libstdc++.
+ENV RUSTFLAGS="-C target-feature=-crt-static"
+
 # install system dependencies
 RUN apk add build-base \
-    cargo \
     clang \
     clang-dev \
     clang-libs \
-    linux-headers \
-    rust
+    linux-headers
 
 # setup build dependencies
 RUN cargo init .
